@@ -24,13 +24,22 @@ EXCLUDE_ARRAY=(
 
 SKIP="$(join '|' "${EXCLUDE_ARRAY[@]}")"
 
+GROUT_TEST_ARGS=""
+GROUT_GINKGO_ARGS=""
+if [ "${OPENPEROUTER_DATAPATH:-}" == "grout" ]; then
+  GROUT_TEST_ARGS="--groutmode"
+  GROUT_GINKGO_ARGS="--label-filter='grout-support || grout-only'"
+fi
+
 CONTAINER_RUNTIME=docker make e2etests \
        TEST_ARGS="--nodelink-config=${SCRIPT_DIR}/nodelink.json \
                --frrk8s-namespace=openshift-frr-k8s \
-               --openperouter-namespace=openshift-openperouter" \
+               --openperouter-namespace=openshift-openperouter \
+               ${GROUT_TEST_ARGS}" \
        KUBECONFIG_PATH="${KUBECONFIG}" \
        GINKGO_ARGS="--junit-report=junit_e2e.xml \
                --label-filter=\!'systemdmode' \
-               --skip='${SKIP}'"
+               --skip='${SKIP}' \
+               ${GROUT_GINKGO_ARGS}"
 
 popd
