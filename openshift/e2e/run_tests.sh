@@ -97,12 +97,33 @@ if [[ "${PROVIDER}" == "bastion" ]]; then
 	export OPENPE_UNDERLAY_IFACE2="${OPENPE_UNDERLAY_IFACE2:-}"
 fi
 
+# Ginkgo --instrumented-nodes-label (k8s label selector). On bastion, default to the
+# same selector used for nodelink (OPENPE_E2E_NODE_SELECTOR) so masters are excluded.
+# Override with OPENPE_E2E_INSTRUMENTED_NODES_LABEL; set empty to select all nodes.
+if [[ "${PROVIDER}" == "bastion" ]]; then
+	INSTRUMENTED_NODES_LABEL="${OPENPE_E2E_INSTRUMENTED_NODES_LABEL:-${OPENPE_E2E_NODE_SELECTOR:-node-role.kubernetes.io/worker}}"
+else
+	INSTRUMENTED_NODES_LABEL="${OPENPE_E2E_INSTRUMENTED_NODES_LABEL:-}"
+fi
+
+TEST_ARGS="--nodelink-config=${NODELINK} \
+	--frrk8s-namespace=${FRRK8S_NAMESPACE} \
+	--openperouter-namespace=${OPENPE_NS}"
+if [[ -n "${INSTRUMENTED_NODES_LABEL}" ]]; then
+	TEST_ARGS="${TEST_ARGS} --instrumented-nodes-label=${INSTRUMENTED_NODES_LABEL}"
+fi
+
 echo "=== Run e2e tests ==="
 echo "  OPENPE_E2E_PROVIDER=${PROVIDER}"
 echo "  CONTAINER_RUNTIME=${RUNTIME} KUBECONFIG=${KUBECONFIG:-}"
 echo "  openperouter-namespace=${OPENPE_NS}"
 echo "  frrk8s-namespace=${FRRK8S_NAMESPACE}"
 echo "  nodelink=${NODELINK}"
+if [[ -n "${INSTRUMENTED_NODES_LABEL}" ]]; then
+	echo "  instrumented-nodes-label=${INSTRUMENTED_NODES_LABEL}"
+else
+	echo "  instrumented-nodes-label=<unset> (all nodes)"
+fi
 if [[ "${PROVIDER}" == "bastion" ]]; then
 	echo "  OPENPE_UNDERLAY_IFACE=${OPENPE_UNDERLAY_IFACE}"
 	if [[ -n "${OPENPE_UNDERLAY_IFACE2}" ]]; then
@@ -117,9 +138,7 @@ echo "  skip=${SKIP}"
 pushd "$SCRIPT_DIR"/../..
 
 CONTAINER_RUNTIME="${RUNTIME}" make e2etests \
-	TEST_ARGS="--nodelink-config=${NODELINK} \
-		--frrk8s-namespace=${FRRK8S_NAMESPACE} \
-		--openperouter-namespace=${OPENPE_NS}" \
+	TEST_ARGS="${TEST_ARGS}" \
 	KUBECONFIG_PATH=$KUBECONFIG \
 	GINKGO_ARGS="--label-filter=\!'systemd-mode' \
         --focus='${FOCUS}' \
