@@ -62,10 +62,35 @@ fi
 OPENPE_NS="${OPENPE_E2E_NAMESPACE:-openshift-openperouter}"
 FRRK8S_NAMESPACE="${FRRK8S_NAMESPACE:-openshift-frr-k8s}"
 
-# Ginkgo --focus regex. Override with OPENPE_E2E_FOCUS to widen/narrow.
+# Ginkgo --focus / --skip. Override with OPENPE_E2E_FOCUS / OPENPE_E2E_SKIP.
 # Default: Baseline + next bastion-safe wave (no SRv6 / DHCP / webhooks).
+# Values may be pipe-separated (legacy) or whitespace-separated; we expand to
+# repeated --focus/--skip flags. Do NOT pass a raw "A|B" string through `make
+# GINKGO_ARGS=...` — Makefile uses `SHELL=bash -o pipefail`, so unquoted `|`
+# turns the ginkgo recipe into a pipeline (suite can pass, make still exits 1).
 FOCUS="${OPENPE_E2E_FOCUS:-Single.Session.Baseline|Node.Router.Status|Router.BGP.sessions|North/south.traffic.after.FRR}"
 SKIP="${OPENPE_E2E_SKIP:-editing.the.underlay.parameters|auto-recover.when.the.named.netns.is.deleted|Webhook|Unnumbered|Router.Host.configuration|DHCP|SRV6}"
+
+# Split "a|b|c" or "a b c" into repeated ginkgo flags (multiple flags are ORed).
+ginkgo_regex_flags() {
+	local flag="$1"
+	local value="$2"
+	local part
+	local out=()
+	if [[ -z "${value}" ]]; then
+		return 0
+	fi
+	value="${value//|/ }"
+	# shellcheck disable=SC2206
+	local parts=( ${value} )
+	for part in "${parts[@]}"; do
+		[[ -n "${part}" ]] || continue
+		out+=( "${flag}=${part}" )
+	done
+	printf '%s\n' "${out[@]}"
+}
+FOCUS_FLAGS="$(ginkgo_regex_flags --focus "${FOCUS}" | paste -sd' ' -)"
+SKIP_FLAGS="$(ginkgo_regex_flags --skip "${SKIP}" | paste -sd' ' -)"
 
 # Bastion preflight: same contract as configure-bastion-worker-net.sh so Ginkgo
 # sees the real underlay NIC (not default toswitch1). Export for make e2etests.
@@ -134,14 +159,15 @@ if [[ "${PROVIDER}" == "bastion" ]]; then
 fi
 echo "  focus=${FOCUS}"
 echo "  skip=${SKIP}"
+echo "  ginkgo focus flags: ${FOCUS_FLAGS}"
+echo "  ginkgo skip flags:  ${SKIP_FLAGS}"
 
 pushd "$SCRIPT_DIR"/../..
 
+# label-filter uses '!'; keep it as one make word with no `|`.
 CONTAINER_RUNTIME="${RUNTIME}" make e2etests \
 	TEST_ARGS="${TEST_ARGS}" \
 	KUBECONFIG_PATH=$KUBECONFIG \
-	GINKGO_ARGS="--label-filter=\!'systemd-mode' \
-        --focus='${FOCUS}' \
-		--skip='${SKIP}'"
+	GINKGO_ARGS="--label-filter=!systemd-mode ${FOCUS_FLAGS} ${SKIP_FLAGS}"
 
 popd
