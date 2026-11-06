@@ -14,7 +14,6 @@ import (
 	"github.com/openperouter/openperouter/internal/grout"
 	"github.com/openperouter/openperouter/internal/grout/devicestate"
 	"github.com/openperouter/openperouter/internal/hostnetwork"
-	"github.com/openperouter/openperouter/internal/hostnetwork/bridgerefresh"
 	"github.com/openperouter/openperouter/internal/pci"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -36,6 +35,16 @@ func NewGroutConfigurator(groutSocketPath string, mode grout.UnderlayPortMode) *
 		sysfs:            pci.Sysfs{Root: "/sys"},
 		underlayPortMode: mode,
 	}
+}
+
+// InterfaceNameForFRR returns the grout port an underlay network device is
+// attached to, as FRR sees the port and not the device. The tunnel endpoint
+// port is not attached to a device and is named after the interface itself.
+func (g *GroutDatapathConfigurator) InterfaceNameForFRR(name string) string {
+	if name == hostnetwork.TunnelLoopback {
+		return name
+	}
+	return grout.UnderlayPortName(name)
 }
 
 func (g *GroutDatapathConfigurator) Configure(ctx context.Context, config interfacesConfiguration) error {
@@ -114,14 +123,6 @@ func (g *GroutDatapathConfigurator) Configure(ctx context.Context, config interf
 			})
 			continue
 		}
-		if err := bridgerefresh.StartForVNI(ctx, vni); err != nil {
-			resourceErrors = append(resourceErrors, &openpeerrors.ResourceError{
-				Obj: v1alpha1.FailedResource{
-					Kind: openpeerrors.KindL2VNI, Name: vni.Name, Reason: reason, Message: err.Error(),
-				},
-			})
-			continue
-		}
 		configuredL2VNIs = append(configuredL2VNIs, vni)
 	}
 
@@ -155,7 +156,6 @@ func (g *GroutDatapathConfigurator) Configure(ctx context.Context, config interf
 	if err := grout.RemoveNonConfiguredVNIs(ctx, groutClient, ovsClient, config.targetNamespace, configuredVNIs); err != nil {
 		return fmt.Errorf("failed to remove deleted vnis: %w", err)
 	}
-	bridgerefresh.StopForRemovedVNIs(configuredL2VNIs)
 
 	slog.InfoContext(ctx, "removing deleted vrfs")
 	if err := grout.RemoveNonConfiguredVRFs(ctx, groutClient, config.targetNamespace, configuredVRFs); err != nil {
@@ -182,9 +182,11 @@ func (g *GroutDatapathConfigurator) cleanupGroutInterfaces(
 	if err := grout.RemoveAllVNIs(ctx, groutClient, ovsClient, targetNamespace); err != nil {
 		slog.Warn("failed to remove vnis after underlay removal", "err", err)
 	}
-	bridgerefresh.StopAllVNIs()
 	if err := grout.RemoveAllVRFs(ctx, groutClient, targetNamespace); err != nil {
 		slog.Warn("failed to remove vrfs after underlay removal", "err", err)
+	}
+	if err := grout.RemoveTunnelEndpoint(ctx, groutClient); err != nil {
+		slog.Warn("failed to remove tunnel endpoint after underlay removal", "err", err)
 	}
 	if err := grout.RestoreUnderlay(ctx, groutClient, targetNamespace,
 		currentUnderlayIfaces, g.deviceStateStore, g.sysfs); err != nil {

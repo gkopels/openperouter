@@ -38,6 +38,8 @@ Grout support is being delivered incrementally. The current implementation cover
 - **L3Passthrough** forwarding via grout
 - **L3VNI** (EVPN Layer 3 overlays) via grout TAP devices
 - **L2VNI** (EVPN Layer 2 overlays) via grout bridge domains and TAP devices
+- **IS-IS** underlay routing, with the tunnel endpoint carried on a dedicated
+  `vtep-lo` grout port advertised as a passive interface
 
 The following are **not yet supported** with grout:
 
@@ -56,7 +58,8 @@ By default grout binds underlay NICs as **PCI ports**. Set
 TAP-based grout underlays need no DPDK-capable NIC or `vfio-pci`; they are
 independent of test mode. With test mode disabled (the default), grout still
 needs hugepages as described below. DPDK-accelerated underlay ports need a
-DPDK-capable NIC.
+PCI NIC supported by DPDK, including virtio-net PCI interfaces in virtual
+machines.
 
 ## Helm Configuration
 
@@ -228,6 +231,12 @@ the bridge in that VRF and configures any addresses in `gatewayIPs` as the
 distributed anycast gateway. The `hostMaster` settings continue to control the
 Linux or OVS bridge attachment on the host.
 
+Grout keeps the EVPN Type-2 routes of silent workloads alive by itself: when a
+learned neighbor has not answered for 30 seconds, grout probes it, and a
+neighbor that doesn't reply is removed. OpenPERouter sets this lifetime on
+grout to match the kernel's default neighbor reachable time, instead of grout's
+20 minute default.
+
 ## DPDK-Accelerated Underlay Ports
 
 The controller binds `NetworkDevice` entries as PCI ports by default, even if
@@ -237,8 +246,8 @@ For PCI ports, the controller:
 
 1. Resolves the PCI address from `/sys/class/net/<interfaceName>/device`
 2. Saves the original driver and non-link-local addresses
-3. Binds non-bifurcated NICs (for example Intel) to `vfio-pci`, or moves
-   `mlx5_core` devices (Mellanox) into the router namespace
+3. Binds non-bifurcated NICs (for example Intel and virtio-net PCI) to
+   `vfio-pci`, or moves `mlx5_core` devices (Mellanox) into the router namespace
 4. Creates the grout port with `grcli interface add port u_<interfaceName> devargs <pci>`
 
 The interface referenced by interfaceName must exist on the host. Any address
@@ -271,6 +280,18 @@ spec:
 All `acceleratedConfig` fields are optional. The field can be omitted to use
 grout defaults for either port type.
 All underlay ports are named `u_<interfaceName>`, so interface names must be at most 13 characters.
+Underlay interfaces referenced in a `RawFRRConfig` must use the `u_` prefix.
+Other interface names, such as `vtep-lo`, remain unchanged.
+[Raw FRR Configuration]({{< ref "raw-frr-config.md" >}}).
+
+> **Note**: virtio-net PCI NICs in virtual machines are supported as PCI ports.
+> DPDK drives them through `vfio-pci`, so the VM needs a vIOMMU and the NIC must
+> translate DMA through it; with QEMU, use `intel-iommu` with `device-iotlb=on`
+> and `virtio-net-pci` with `iommu_platform=on,ats=on`. Without that, grout hangs
+> while setting up the port. A virtio NIC has a single queue pair unless
+> multiqueue is enabled (`queues=<N>` on the tap netdev and `mq=on` on the `virtio-net-pci` device), and
+> `rxQueues` and `qSize` cannot exceed the queue pairs and the `rx_queue_size`
+> of the device.
 
 ## Verification
 

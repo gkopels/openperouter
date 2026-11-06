@@ -35,6 +35,10 @@ func (n *noopDatapathConfigurator) Validate(_ conversion.APIConfigData) error {
 	return nil
 }
 
+func (n *noopDatapathConfigurator) InterfaceNameForFRR(name string) string {
+	return name
+}
+
 func TestReconcilePerResourceErrors(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -690,6 +694,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 }
 
 func TestReconcileFrrReloadFailure(t *testing.T) {
+	resetFRRConfigCache(t)
 	reconcileErr := Reconcile(context.Background(), conversion.APIConfigData{}, 0, "",
 		"", "", failingUpdater, &noopDatapathConfigurator{}, configureFRR)
 	if reconcileErr == nil {
@@ -721,6 +726,10 @@ func (r *recordingDatapathConfigurator) Validate(_ conversion.APIConfigData) err
 	return nil
 }
 
+func (r *recordingDatapathConfigurator) InterfaceNameForFRR(name string) string {
+	return name
+}
+
 // TestReconcileAppliesFRRConfigBeforeDatapath pins the ordering between the FRR
 // configuration and the datapath. The kernel objects must only be created once FRR
 // already references them: bgpd handles ZEBRA_VNI_ADD in bgp_evpn_local_vni_add(),
@@ -749,6 +758,7 @@ func TestReconcileAppliesFRRConfigBeforeDatapath(t *testing.T) {
 // TestReconcileSkipsDatapathOnFrrReloadFailure ensures no kernel object is created
 // when FRR could not be configured, so that the datapath never gets ahead of FRR.
 func TestReconcileSkipsDatapathOnFrrReloadFailure(t *testing.T) {
+	resetFRRConfigCache(t)
 	var steps []string
 
 	reconcileErr := Reconcile(context.Background(), conversion.APIConfigData{}, 0, "",
