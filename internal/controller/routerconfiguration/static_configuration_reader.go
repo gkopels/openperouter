@@ -237,27 +237,50 @@ func staticConfigToAPIConfig(staticConfig *static.PERouterConfig, nodeName, name
 func applyDefaultsAndValidate[T any](obj *T, gvk schema.GroupVersionKind) (*T, field.ErrorList) {
 	rawMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	if err != nil {
-		return nil, field.ErrorList{field.InternalError(field.NewPath(""), fmt.Errorf("converting to unstructured: %w", err))}
+		return nil, field.ErrorList{
+			field.InternalError(
+				field.NewPath(""),
+				fmt.Errorf("converting to unstructured: %T: %w", *obj, err),
+			),
+		}
 	}
 
 	normalizedMap, err := normalizeGoTypes(rawMap)
 	if err != nil {
-		return nil, field.ErrorList{field.InternalError(field.NewPath(""), fmt.Errorf("normalizing Go types: %w", err))}
+		return nil, field.ErrorList{
+			field.InternalError(
+				field.NewPath(""),
+				fmt.Errorf("normalizing Go types: %T: %w", *obj, err),
+			),
+		}
 	}
 
 	unstrObj := &unstructured.Unstructured{Object: normalizedMap}
 
 	if err := crdschema.ApplyDefaults(unstrObj, gvk); err != nil {
-		return nil, field.ErrorList{field.InternalError(field.NewPath(""), fmt.Errorf("applying defaults: %w", err))}
+		return nil, field.ErrorList{
+			field.InternalError(
+				field.NewPath(""),
+				fmt.Errorf("applying defaults: %T: %w", *obj, err),
+			),
+		}
 	}
 
 	if valErrs := crdschema.Validate(context.Background(), unstrObj, gvk); len(valErrs) > 0 {
+		for i := range valErrs {
+			valErrs[i].Field = fmt.Sprintf("%T: %s", *obj, valErrs[i].Field)
+		}
 		return nil, valErrs
 	}
 
 	var result T
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstrObj.Object, &result); err != nil {
-		return nil, field.ErrorList{field.InternalError(field.NewPath(""), fmt.Errorf("converting from unstructured: %w", err))}
+		return nil, field.ErrorList{
+			field.InternalError(
+				field.NewPath(""),
+				fmt.Errorf("converting from unstructured: %T: %w", *obj, err),
+			),
+		}
 	}
 
 	return &result, nil
@@ -288,8 +311,7 @@ func staticUnderlaysToAPI(
 	var underlays []v1alpha1.Underlay
 	passwords := make(map[string]string)
 	for i, staticUnderlay := range staticUnderlays {
-		neighborsPath := field.NewPath("underlays").Index(i).Child("neighbors")
-		if errs := validateStaticNeighbors(staticUnderlay.Neighbors, neighborsPath); len(errs) > 0 {
+		if errs := validateStaticNeighbors(staticUnderlay.Neighbors); len(errs) > 0 {
 			allErrors = append(allErrors, errs...)
 			continue
 		}
@@ -302,7 +324,13 @@ func staticUnderlaysToAPI(
 		spec.NodeSelector = nodeSelector
 		spec.Neighbors = make([]v1alpha1.Neighbor, len(staticUnderlay.Neighbors))
 		for j, sn := range staticUnderlay.Neighbors {
-			spec.Neighbors[j] = sn.Neighbor
+			neighbor := sn.Neighbor
+			if sn.Password != nil {
+				// The static plaintext value supplies authentication, so retaining a
+				// Secret reference would make the mirrored CR misleading.
+				neighbor.PasswordSecret = nil
+			}
+			spec.Neighbors[j] = neighbor
 		}
 		underlay := v1alpha1.Underlay{
 			TypeMeta: metav1.TypeMeta{
@@ -329,34 +357,22 @@ func staticUnderlaysToAPI(
 	return underlays, passwords, allErrors
 }
 
-// validateStaticNeighbors validates neighbors from static (systemd) config.
-// In static mode there are no Kubernetes Secrets, so passwords are set as
-// plaintext in StaticNeighbor.Password. When a plaintext password is present
-// it takes precedence and PasswordSecret is cleared so that the later
-// resolvePasswordSecrets call (which handles the CRD/Secret path) skips it.
-func validateStaticNeighbors(staticNeighbors []static.StaticNeighbor, basePath *field.Path) field.ErrorList {
-	seen := make(map[string]struct{}, len(staticNeighbors))
-	for i := range staticNeighbors {
-		sn := &staticNeighbors[i]
-		p := basePath.Index(i)
-		key := conversion.NeighborID(sn.Neighbor)
-		if key == "" {
-			return field.ErrorList{field.Invalid(p, nil, "neighbor has neither address nor interface")}
-		}
-		if _, dup := seen[key]; dup {
-			return field.ErrorList{field.Invalid(p, key, "duplicate neighbor")}
-		}
-		seen[key] = struct{}{}
-		if sn.Password == nil {
+// validateStaticNeighbors validates plaintext passwords carried by static
+// (systemd) neighbors. Other neighbor constraints are enforced by the CRD
+// schema and conversion.ValidateUnderlays during reconciliation.
+func validateStaticNeighbors(neighbors []static.StaticNeighbor) field.ErrorList {
+	var errs field.ErrorList
+	for _, neighbor := range neighbors {
+		if neighbor.Password == nil {
 			continue
 		}
-		if err := validatePassword(*sn.Password); err != nil {
-			return field.ErrorList{field.Invalid(
-				p.Child("password"), nil,
-				fmt.Sprintf("static config password for neighbor %s: %s", conversion.NeighborID(sn.Neighbor), err),
-			)}
+		if err := validatePassword(*neighbor.Password); err != nil {
+			errs = append(errs, field.Invalid(
+				field.NewPath("neighbors").Key(conversion.NeighborID(neighbor.Neighbor)).Child("password"),
+				nil,
+				fmt.Sprintf("static config password: %s", err),
+			))
 		}
-		sn.PasswordSecret = nil
 	}
-	return nil
+	return errs
 }

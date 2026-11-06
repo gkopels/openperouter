@@ -5,7 +5,6 @@ package e2e
 import (
 	"flag"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
@@ -24,6 +23,7 @@ import (
 
 var (
 	updater            *config.Updater
+	inspectPath        string
 	nodeLinkConfigPath string
 	nodeExecImage      string
 )
@@ -37,8 +37,11 @@ func handleFlags() {
 	flag.BoolVar(&tests.SkipUnderlayPassthrough, "skip-underlay-passthrough", false, "skip creating underlay in passthrough tests")
 	flag.StringVar(&frrk8s.Namespace, "frrk8s-namespace", frrk8s.Namespace, "namespace where FRR-K8s pods run")
 	flag.StringVar(&openperouter.Namespace, "openperouter-namespace", openperouter.Namespace, "namespace where OpenPERouter pods run")
+	flag.StringVar(&inspectPath, "inspect-path", "../../tools/inspect/inspect", "path to the inspect tool")
 	flag.StringVar(&nodeLinkConfigPath, "nodelink-config", "../nodelink-default.json", "path to node links config JSON")
 	flag.StringVar(&nodeExecImage, "node-exec-image", "busybox:1.36", "container image for node-exec-helper pods")
+	flag.StringVar(&openperouter.InstrumentedNodesLabel, "instrumented-nodes-label", "",
+		"label selector for instrumented nodes (key=value); empty selects all nodes")
 	flag.Parse()
 }
 
@@ -58,6 +61,7 @@ func TestE2E(t *testing.T) {
 	}
 
 	RegisterFailHandler(ginkgo.Fail)
+	Expect(infra.RegisterLinks(nodeLinkConfigPath)).To(Succeed())
 	ginkgo.RunSpecs(t, "E2E Suite")
 }
 
@@ -68,20 +72,21 @@ var _ = ginkgo.BeforeSuite(func() {
 	updater, err = config.UpdaterForCRs(clientconfig, openperouter.Namespace, frrk8s.Namespace)
 	Expect(err).NotTo(HaveOccurred())
 	tests.Updater = updater
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		kubeconfig = filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	}
-	reporter, err := k8s.InitReporter(kubeconfig, tests.ReportPath, openperouter.Namespace, frrk8s.Namespace)
-	Expect(err).NotTo(HaveOccurred(), "failed to initialize k8s reporter (kubeconfig=%s)", kubeconfig)
-	tests.K8sReporter = reporter
+	tests.InspectReporter = k8s.NewInspectReporter(
+		inspectPath,
+		tests.ReportPath,
+		executor.Kubectl,
+		openperouter.Namespace,
+		k8s.WithAdditionalNamespaces(frrk8s.Namespace),
+	)
 
 	cs := k8sclient.New()
+	nodes, err := k8s.GetNodes(cs)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(k8s.NodesWithLabel(nodes, openperouter.InstrumentedNodesLabel)).NotTo(
+		BeEmpty(), "no nodes match instrumented node label selector %q", openperouter.InstrumentedNodesLabel,
+	)
 	Expect(executor.SetupNodeExec(cs, frrk8s.Namespace, nodeExecImage)).To(Succeed(), "failed to setup node-exec-helper")
-
-	ginkgo.By("Registering fabric and node links from " + nodeLinkConfigPath)
-	Expect(infra.RegisterLinks(nodeLinkConfigPath)).To(Succeed())
-
 })
 
 var _ = ginkgo.AfterSuite(func() {

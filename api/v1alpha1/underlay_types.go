@@ -148,6 +148,25 @@ type NetworkDevice struct {
 	// +kubebuilder:validation:MaxLength=15
 	// +required
 	InterfaceName string `json:"interfaceName,omitempty"`
+
+	// acceleratedConfig sets optional grout port parameters. Only valid when --datapath=grout.
+	// +optional
+	AcceleratedConfig *AcceleratedConfig `json:"acceleratedConfig,omitempty"`
+}
+
+// AcceleratedConfig holds optional grout port parameters for underlay interfaces.
+type AcceleratedConfig struct {
+	// rxQueues is the number of receive queues to allocate on the DPDK port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=64
+	// +optional
+	RXQueues *int32 `json:"rxQueues,omitempty"`
+	// qSize is the descriptor ring size for each receive queue. Larger
+	// rings absorb traffic bursts at the cost of memory.
+	// +kubebuilder:validation:Minimum=64
+	// +kubebuilder:validation:Maximum=32768
+	// +optional
+	QSize *int32 `json:"qSize,omitempty"`
 }
 
 // CNIConfigType selects the source of the CNI configuration.
@@ -252,7 +271,7 @@ type GracefulRestartConfig struct {
 // TunnelEndpointConfig contains tunnel endpoint configuration for the underlay.
 type TunnelEndpointConfig struct {
 	// cidrs is a list of CIDRs to be used to assign IPs to the local tunnel endpoint on
-	// each node. IPs derived from these CIDRs will be assigned to the local loopback.
+	// each node. IPs derived from these CIDRs will be assigned to the tunnel endpoint interface.
 	// At least one IPv4 or IPv6 CIDR is required. At most one of each family may be specified.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=2
@@ -275,6 +294,7 @@ type ISISConfig struct {
 	// features enables ISIS boolean features.
 	// Supported features are:
 	// advertisePassiveOnly: configures ISIS to advertise only prefixes that belong to passive interfaces.
+	// multiTopology: configures multi-topology mode for IPv4 and IPv6.
 	// +kubebuilder:validation:MaxItems:=32
 	// +listType=atomic
 	// +optional
@@ -304,8 +324,15 @@ type ISISNet string
 // ISISFeature represents a single ISIS feature.
 // +kubebuilder:validation:MinLength:=1
 // +kubebuilder:validation:MaxLength:=128
-// +kubebuilder:validation:Enum:=advertisePassiveOnly
+// +kubebuilder:validation:Enum:=advertisePassiveOnly;multiTopology
 type ISISFeature string
+
+const (
+	// AdvertisePassiveOnly instructs ISIS to advertise passive interfaces only.
+	AdvertisePassiveOnly ISISFeature = "advertisePassiveOnly"
+	// MultiTopology enables ISIS multi-topology mode (RFC5120) for IPv4 and IPv6 families.
+	MultiTopology ISISFeature = "multiTopology"
+)
 
 // ISISInterface holds ISIS interface level configuration.
 type ISISInterface struct {

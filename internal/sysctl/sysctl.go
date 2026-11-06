@@ -54,6 +54,20 @@ func Ensure(sysctls ...Sysctl) error {
 	return nil
 }
 
+// Read returns the current value of the given sysctl, or an empty string
+// when the sysctl is not supported (e.g. IPv6 disabled on the interface).
+func Read(s Sysctl) (string, error) {
+	path := "/proc/sys/" + s.Path
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
 // IPv4Forwarding returns the sysctl definition for enabling IPv4 forwarding.
 func IPv4Forwarding() Sysctl {
 	return Sysctl{
@@ -140,6 +154,37 @@ func EnableVRFStrictMode() Sysctl {
 	}
 }
 
+// DisableAcceptRA returns the sysctl definition for disabling IPv6 Router
+// Advertisement processing on the given interface, which prevents the kernel
+// from autoconfiguring SLAAC addresses.
+func DisableAcceptRA(ifname string) Sysctl {
+	return Sysctl{
+		Path:        acceptRAPath(ifname),
+		Description: fmt.Sprintf("disable accept_ra on interface %s", ifname),
+		Value:       "0",
+	}
+}
+
+// AcceptRA returns the sysctl definition for setting IPv6 Router
+// Advertisement processing on the given interface to value.
+func AcceptRA(ifname, value string) Sysctl {
+	return Sysctl{
+		Path:        acceptRAPath(ifname),
+		Description: fmt.Sprintf("set accept_ra to %s on interface %s", value, ifname),
+		Value:       value,
+	}
+}
+
+// AddrGenMode returns the sysctl definition for setting the IPv6 address
+// generation mode of the given interface to value.
+func AddrGenMode(ifname, value string) Sysctl {
+	return Sysctl{
+		Path:        fmt.Sprintf("net/ipv6/conf/%s/addr_gen_mode", ifname),
+		Description: fmt.Sprintf("set addr_gen_mode to %s on interface %s", value, ifname),
+		Value:       value,
+	}
+}
+
 // DisableRPFilter returns the sysctl definition for disabling reverse path filtering on the
 // given interface. Disabling rp_filter (setting it to 0) is necessary for interfaces that receive
 // packets with source addresses that may not match the local routing table, such as SRv6 decapsulated
@@ -200,7 +245,11 @@ func ensureSysctl(s Sysctl) error {
 	if err := os.WriteFile(path, []byte(s.Value), 0644); err != nil {
 		return fmt.Errorf("failed to write to %s: %w", path, err)
 	}
-	slog.Info("sysctl enabled", "path", s.Path, "description", s.Description)
+	slog.Info("sysctl set", "path", s.Path, "value", s.Value, "description", s.Description)
 
 	return nil
+}
+
+func acceptRAPath(ifname string) string {
+	return fmt.Sprintf("net/ipv6/conf/%s/accept_ra", ifname)
 }

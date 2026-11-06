@@ -16,7 +16,6 @@ const (
 )
 
 type nodeLinksConfig struct {
-	// UnderlayHostIfaces are host NIC names for Underlay CRs (empty = Kind defaults).
 	UnderlayHostIfaces []string              `json:"underlayHostIfaces,omitempty"`
 	Nodes              map[string]nodeConfig `json:"nodes"`
 }
@@ -33,7 +32,9 @@ type nodeConfig struct {
 }
 
 func RegisterLinks(path string) error {
-	registerFabricLinks()
+	if err := registerFabricLinks(); err != nil {
+		return fmt.Errorf("registering fabric links: %w", err)
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -44,13 +45,10 @@ func RegisterLinks(path string) error {
 		return fmt.Errorf("parsing node links config %s: %w", path, err)
 	}
 
-	ifaceCfg, err := ResolveUnderlayHostIfaces(cfg.UnderlayHostIfaces)
-	if err != nil {
+	if err := initializeUnderlays(cfg.UnderlayHostIfaces); err != nil {
 		return fmt.Errorf("underlayHostIfaces in %s: %w", path, err)
 	}
-	ConfigureUnderlayIfaces(ifaceCfg)
-
-	if err := registerNodeLinks(cfg, ifaceCfg.DualLeaf); err != nil {
+	if err := registerNodeLinks(cfg); err != nil {
 		return fmt.Errorf("node links in %s: %w", path, err)
 	}
 	return nil

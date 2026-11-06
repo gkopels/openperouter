@@ -21,6 +21,9 @@ type EnvConfig struct {
 	FRRImage              ImageInfo
 	KubeRBacImage         ImageInfo
 	GroutImage            *ImageInfo
+	GroutTestMode         bool
+	GroutTapUnderlay      bool
+	GroutMaxMTU           int
 	FRRMetricsPort        int
 	SecureFRRMetricsPort  int
 	MetricsPort           int
@@ -55,6 +58,12 @@ func FromEnvironment(isOpenshift bool) (EnvConfig, error) {
 	}
 
 	res.GroutImage = optionalImageFromEnv("GROUT_IMAGE")
+	res.GroutTestMode = boolFromEnv("GROUT_TEST_MODE")
+	res.GroutTapUnderlay = boolFromEnv("GROUT_TAP_UNDERLAY")
+	res.GroutMaxMTU, err = intValueWithDefault("GROUT_MAX_MTU", 0)
+	if err != nil {
+		return EnvConfig{}, err
+	}
 
 	res.FRRMetricsPort, err = intValueWithDefault("FRR_METRICS_PORT", 7473)
 	if err != nil {
@@ -73,12 +82,8 @@ func FromEnvironment(isOpenshift bool) (EnvConfig, error) {
 		return EnvConfig{}, err
 	}
 
-	if os.Getenv("DEPLOY_PODMONITORS") == "true" {
-		res.DeployPodMonitors = true
-	}
-	if os.Getenv("DEPLOY_SERVICEMONITORS") == "true" {
-		res.DeployServiceMonitors = true
-	}
+	res.DeployPodMonitors = boolFromEnv("DEPLOY_PODMONITORS")
+	res.DeployServiceMonitors = boolFromEnv("DEPLOY_SERVICEMONITORS")
 
 	err = validate(res)
 	if err != nil {
@@ -97,6 +102,10 @@ func validate(config EnvConfig) error {
 	}
 	if config.SecureFRRMetricsPort != 0 && !config.DeployServiceMonitors {
 		return fmt.Errorf("secureFRRMetricsPort is available only if service monitors are enabled")
+	}
+	// 0 is the sentinel for "use the grout default", so only negative values are invalid.
+	if config.GroutMaxMTU < 0 {
+		return fmt.Errorf("groutMaxMTU must be 0 (default) or positive, was %d", config.GroutMaxMTU)
 	}
 	return nil
 }
@@ -132,6 +141,10 @@ func getImageNameTag(envValue string) (string, string) {
 		return repoPath + img[0], ""
 	}
 	return repoPath + img[0], img[1]
+}
+
+func boolFromEnv(name string) bool {
+	return os.Getenv(name) == "true"
 }
 
 func intValueWithDefault(name string, def int) (int, error) {

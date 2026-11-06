@@ -10,6 +10,7 @@ import (
 
 	"github.com/openperouter/openperouter/api/v1alpha1"
 	"github.com/openperouter/openperouter/internal/frr"
+	"github.com/openperouter/openperouter/internal/hostnetwork"
 	"github.com/openperouter/openperouter/internal/networklayerprotocol"
 )
 
@@ -70,7 +71,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -113,7 +114,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -161,7 +162,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -209,7 +210,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -268,7 +269,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -347,7 +348,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -422,7 +423,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -509,8 +510,8 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{},
-				VPNs: []frr.L3VPNConfig{},
+				L3VNIs: []frr.L3VNIConfig{},
+				VPNs:   []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{
 					{
 						Name:             "neighbor-192.168.1.100",
@@ -567,7 +568,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -621,7 +622,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:       65000,
 						VNI:       200,
@@ -691,7 +692,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -763,7 +764,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:       65000,
 						VNI:       200,
@@ -831,7 +832,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -907,7 +908,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -983,7 +984,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -1036,7 +1037,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1108,7 +1109,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
 					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1173,7 +1174,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
 					ToAdvertiseIPv6: []string{},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1231,7 +1232,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{},
 					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1295,7 +1296,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
 					ToAdvertiseIPv6: []string{},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1355,7 +1356,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{},
 					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1422,7 +1423,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
 					ToAdvertiseIPv6: []string{},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1517,7 +1518,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
 					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1590,7 +1591,7 @@ func TestAPItoFRR(t *testing.T) {
 					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
 					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -1651,7 +1652,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:             65000,
 						VNI:             200,
@@ -1722,7 +1723,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:             65000,
 						VNI:             200,
@@ -1801,7 +1802,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:       65000,
 						VNI:       200,
@@ -1878,7 +1879,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{},
+				L3VNIs: []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:                65000,
@@ -1947,7 +1948,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{},
+				L3VNIs: []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:                65000,
@@ -2025,7 +2026,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{},
+				L3VNIs: []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:                65000,
@@ -2135,7 +2136,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -2176,7 +2177,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 					RouterID: "10.0.0.0",
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 			},
@@ -2212,7 +2213,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 					RouterID: "10.0.0.0",
 				},
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 			},
@@ -2257,7 +2258,7 @@ func TestAPItoFRR(t *testing.T) {
 						Interfaces: []frr.ISISInterface{
 							{Name: "eth0", IPv6: true},
 							{Name: "eth10", IPv6: true},
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2275,7 +2276,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -2307,9 +2308,6 @@ func TestAPItoFRR(t *testing.T) {
 							Level:   new(int32(1)),
 							Interfaces: []v1alpha1.ISISInterface{
 								{
-									Name: "lo",
-								},
-								{
 									Name:     "eth0",
 									IPFamily: new(v1alpha1.IPFamilyDualStack),
 								},
@@ -2336,7 +2334,7 @@ func TestAPItoFRR(t *testing.T) {
 							{Name: "eth0", IPv4: true, IPv6: true},
 							{Name: "eth1", IPv4: true, IsPassive: true},
 							{Name: "eth10", IPv6: true},
-							{Name: "lo"},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2354,7 +2352,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -2362,7 +2360,7 @@ func TestAPItoFRR(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:      "ISIS enable passive only",
+			name:      "ISIS features are enabled",
 			nodeIndex: 0,
 			underlays: []v1alpha1.Underlay{
 				{
@@ -2374,7 +2372,8 @@ func TestAPItoFRR(t *testing.T) {
 							BaseNet: "49.0001.0002.0003.0004.00",
 							Level:   new(int32(1)),
 							Features: []v1alpha1.ISISFeature{
-								advertisePassiveOnly,
+								v1alpha1.AdvertisePassiveOnly,
+								v1alpha1.MultiTopology,
 							},
 							Interfaces: []v1alpha1.ISISInterface{
 								{Name: "eth0", IPFamily: new(v1alpha1.IPFamilyDualStack)},
@@ -2394,10 +2393,11 @@ func TestAPItoFRR(t *testing.T) {
 						Net:                  frr.MustParseISISNet("49.0001.0002.0003.0004.00"),
 						Level:                1,
 						AdvertisePassiveOnly: true,
+						MultiTopology:        true,
 						Interfaces: []frr.ISISInterface{
 							{Name: "eth0", IPv4: true, IPv6: true},
 							{Name: "eth1", IPv4: false, IPv6: true},
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2415,7 +2415,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -2448,7 +2448,7 @@ func TestAPItoFRR(t *testing.T) {
 						Net:   frr.MustParseISISNet("49.0001.0002.0003.0004.00"),
 						Level: 2,
 						Interfaces: []frr.ISISInterface{
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2466,7 +2466,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs:        []frr.L3VPNConfig{},
 				BFDProfiles: []frr.BFDProfile{},
 				Loglevel:    "debug",
@@ -2582,7 +2582,7 @@ func TestAPItoFRR(t *testing.T) {
 			},
 			vpns: []v1alpha1.L3VPN{
 				{
-					ObjectMeta: metav1.ObjectMeta{Name: "vni1"},
+					ObjectMeta: metav1.ObjectMeta{Name: "vrf1"},
 					Spec: v1alpha1.L3VPNSpec{
 						HostSession: &v1alpha1.HostSession{
 							ASN:        65000,
@@ -2593,6 +2593,23 @@ func TestAPItoFRR(t *testing.T) {
 						ExportRTs:        []v1alpha1.RouteTarget{"65000:100", "11110:100"},
 						ImportRTs:        []v1alpha1.RouteTarget{"65001:100", "11111:100"},
 						RDAssignedNumber: 100,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "vrf2"},
+					Spec: v1alpha1.L3VPNSpec{
+						HostSession: &v1alpha1.HostSession{
+							ASN:        65000,
+							LocalCIDRs: []string{"192.168.2.0/24", "2001:db8::/64"},
+							HostASN:    new(int64(65001)),
+						},
+						VRF:              "vrf2",
+						ExportRTs:        []v1alpha1.RouteTarget{"65000:101", "11110:101"},
+						ImportRTs:        []v1alpha1.RouteTarget{"65001:101", "11111:101"},
+						RDAssignedNumber: 101,
+						Features: []v1alpha1.L3VPNFeature{
+							v1alpha1.UDT4UDT6,
+						},
 					},
 				},
 			},
@@ -2606,7 +2623,7 @@ func TestAPItoFRR(t *testing.T) {
 						Level: 1,
 						Interfaces: []frr.ISISInterface{
 							{Name: "eth0", IPv4: true, IPv6: true},
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2642,7 +2659,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:             65000,
@@ -2673,6 +2690,165 @@ func TestAPItoFRR(t *testing.T) {
 						ImportRTs:          []string{"65001:100", "11111:100"},
 						RouteDistinguisher: "10.0.0.0:100",
 						RouterID:           "10.0.0.0",
+					},
+					{
+						ASN:             65000,
+						ToAdvertiseIPv4: []string{"192.168.2.2/32"},
+						ToAdvertiseIPv6: []string{},
+						LocalNeighbor: &frr.NeighborConfig{
+							ASN:  mustNewPeerASNFromNumber(65001),
+							Addr: "192.168.2.2",
+							ID:   "192.168.2.2",
+						},
+						VRF:                "vrf2",
+						ExportRTs:          []string{"65000:101", "11110:101"},
+						ImportRTs:          []string{"65001:101", "11111:101"},
+						RouteDistinguisher: "10.0.0.0:101",
+						RouterID:           "10.0.0.0",
+						UDT4UDT6:           true,
+					},
+					{
+						ASN:             65000,
+						ToAdvertiseIPv4: []string{},
+						ToAdvertiseIPv6: []string{"2001:db8::2/128"},
+						LocalNeighbor: &frr.NeighborConfig{
+							ASN:  mustNewPeerASNFromNumber(65001),
+							Addr: "2001:db8::2",
+							ID:   "2001:db8::2",
+						},
+						VRF:                "vrf2",
+						ExportRTs:          []string{"65000:101", "11110:101"},
+						ImportRTs:          []string{"65001:101", "11111:101"},
+						RouteDistinguisher: "10.0.0.0:101",
+						RouterID:           "10.0.0.0",
+						UDT4UDT6:           true,
+					},
+				},
+				BFDProfiles: []frr.BFDProfile{},
+				Loglevel:    "debug",
+			},
+			wantErr: false,
+		},
+		{
+			name:      "SRV6 with L3VPN only without host session",
+			nodeIndex: 0,
+			underlays: []v1alpha1.Underlay{
+				{
+					Spec: v1alpha1.UnderlaySpec{
+						ASN:          65000,
+						RouterIDCIDR: new("10.0.0.0/24"),
+						Neighbors: []v1alpha1.Neighbor{
+							{
+								Address: new("2001:db8:192:168:1::1"),
+								ASN:     new(int64(65001)),
+							},
+						},
+						TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{
+							CIDRs: []string{"2001:db8:1234:5678::/64"},
+						},
+						ISIS: &v1alpha1.ISISConfig{
+							BaseNet: "49.0001.0002.0003.0004.00",
+							Level:   new(int32(1)),
+							Interfaces: []v1alpha1.ISISInterface{
+								{Name: "eth0", IPFamily: new(v1alpha1.IPFamilyDualStack)},
+							},
+						},
+						SRV6: &v1alpha1.SRV6Config{
+							Locator: v1alpha1.SRV6Locator{
+								BasePrefix: "fd00:0:32::/48",
+								Format:     "usid-f3216",
+							},
+						},
+					},
+				},
+			},
+			vpns: []v1alpha1.L3VPN{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "vrf1"},
+					Spec: v1alpha1.L3VPNSpec{
+						VRF:              "vrf1",
+						ExportRTs:        []v1alpha1.RouteTarget{"65000:100", "11110:100"},
+						ImportRTs:        []v1alpha1.RouteTarget{"65001:100", "11111:100"},
+						RDAssignedNumber: 100,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "vrf2"},
+					Spec: v1alpha1.L3VPNSpec{
+						VRF:              "vrf2",
+						ExportRTs:        []v1alpha1.RouteTarget{"65000:101", "11110:101"},
+						ImportRTs:        []v1alpha1.RouteTarget{"65001:101", "11111:101"},
+						RDAssignedNumber: 101,
+						Features: []v1alpha1.L3VPNFeature{
+							v1alpha1.UDT4UDT6,
+						},
+					},
+				},
+			},
+			logLevel: "debug",
+			want: frr.Config{
+				Underlay: frr.UnderlayConfig{
+					MyASN: 65000,
+					ISIS: &frr.UnderlayISIS{
+						Name:  isisProcessName,
+						Net:   frr.MustParseISISNet("49.0001.0002.0003.0004.00"),
+						Level: 1,
+						Interfaces: []frr.ISISInterface{
+							{Name: "eth0", IPv4: true, IPv6: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
+						},
+					},
+					RouterID: "10.0.0.0",
+					Neighbors: []frr.NeighborConfig{
+						{
+							Name: "65001@2001:db8:192:168:1::1",
+							ASN:  mustNewPeerASNFromNumber(65001),
+							Addr: "2001:db8:192:168:1::1",
+							ID:   "2001:db8:192:168:1::1",
+							NetworkLayerProtocols: []networklayerprotocol.NLP{
+								{AFI: networklayerprotocol.IPv6, SAFI: networklayerprotocol.Unicast},
+								{AFI: networklayerprotocol.IPv4, SAFI: networklayerprotocol.VPN},
+								{AFI: networklayerprotocol.IPv6, SAFI: networklayerprotocol.VPN},
+							},
+							UpdateSource:    "2001:db8:1234:5678::",
+							ExtendedNexthop: true,
+						},
+					},
+					TunnelEndpoint: &frr.TunnelEndpoint{
+						IPv6CIDR: "2001:db8:1234:5678::/128",
+					},
+					SegmentRouting: &frr.UnderlaySegmentRouting{
+						SourceAddress: "2001:db8:1234:5678::",
+						Locator: frr.SRV6Locator{
+							Name:     locatorName,
+							Prefix:   "fd00:0:32::/48",
+							BlockLen: 32,
+							NodeLen:  16,
+							Behavior: "usid",
+							Format:   "usid-f3216",
+						},
+						EncapBehavior: frr.HEncaps,
+					},
+				},
+				Passthrough: nil,
+				L3VNIs:      []frr.L3VNIConfig{},
+				VPNs: []frr.L3VPNConfig{
+					{
+						ASN:                65000,
+						VRF:                "vrf1",
+						ExportRTs:          []string{"65000:100", "11110:100"},
+						ImportRTs:          []string{"65001:100", "11111:100"},
+						RouteDistinguisher: "10.0.0.0:100",
+						RouterID:           "10.0.0.0",
+					},
+					{
+						ASN:                65000,
+						VRF:                "vrf2",
+						ExportRTs:          []string{"65000:101", "11110:101"},
+						ImportRTs:          []string{"65001:101", "11111:101"},
+						RouteDistinguisher: "10.0.0.0:101",
+						RouterID:           "10.0.0.0",
+						UDT4UDT6:           true,
 					},
 				},
 				BFDProfiles: []frr.BFDProfile{},
@@ -2740,7 +2916,7 @@ func TestAPItoFRR(t *testing.T) {
 						Level: 1,
 						Interfaces: []frr.ISISInterface{
 							{Name: "eth0", IPv4: true, IPv6: true},
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2776,7 +2952,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:             65000,
@@ -2872,7 +3048,7 @@ func TestAPItoFRR(t *testing.T) {
 						Level: 1,
 						Interfaces: []frr.ISISInterface{
 							{Name: "eth0", IPv4: true, IPv6: true},
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -2908,7 +3084,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:             65000,
@@ -3069,7 +3245,7 @@ func TestAPItoFRR(t *testing.T) {
 						Level: 1,
 						Interfaces: []frr.ISISInterface{
 							{Name: "eth0", IPv4: true, IPv6: true},
-							{Name: "lo", IPv6: true, IsPassive: true},
+							{Name: "vtep-lo", IPv4: true, IPv6: true, IsPassive: true},
 						},
 					},
 					RouterID: "10.0.0.0",
@@ -3122,7 +3298,7 @@ func TestAPItoFRR(t *testing.T) {
 					},
 				},
 				Passthrough: nil,
-				VNIs:        []frr.L3VNIConfig{},
+				L3VNIs:      []frr.L3VNIConfig{},
 				VPNs: []frr.L3VPNConfig{
 					{
 						ASN:             65000,
@@ -3224,7 +3400,7 @@ func TestAPItoFRR(t *testing.T) {
 						},
 					},
 				},
-				VNIs: []frr.L3VNIConfig{
+				L3VNIs: []frr.L3VNIConfig{
 					{
 						ASN:      65000,
 						VNI:      200,
@@ -3259,16 +3435,84 @@ func TestAPItoFRR(t *testing.T) {
 				L3Passthrough: tt.l3Passthrough,
 				L3VPNs:        tt.vpns,
 			}
-			got, err := APItoFRR(apiConfig, tt.nodeIndex, tt.logLevel)
+			converter := APIToFRRConverter{
+				NodeIndex:      tt.nodeIndex,
+				LogLevel:       tt.logLevel,
+				InterfaceNames: kernelDatapath,
+			}
+			got, err := converter.Convert(apiConfig)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("APItoFRR() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("APIToFRRConverter.Convert() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if tt.wantErr {
 				return
 			}
 			if !cmp.Equal(got, tt.want) {
-				t.Errorf("APItoFRR() = %v, diff %s", got, cmp.Diff(got, tt.want))
+				t.Errorf("APIToFRRConverter.Convert() = %v, diff %s", got, cmp.Diff(got, tt.want))
+			}
+		})
+	}
+}
+
+func TestL2VNIConfigsToFRR(t *testing.T) {
+	tests := []struct {
+		name   string
+		l2vnis []v1alpha1.L2VNI
+		want   []frr.L2VNIConfig
+	}{
+		{
+			name: "automatic RD",
+			l2vnis: []v1alpha1.L2VNI{{Spec: v1alpha1.L2VNISpec{
+				VNI: 100,
+			}}},
+		},
+		{
+			name: "automatic RD with explicit route targets",
+			l2vnis: []v1alpha1.L2VNI{{Spec: v1alpha1.L2VNISpec{
+				VNI:       100,
+				ExportRTs: []v1alpha1.RouteTarget{"65000:100", "192.0.2.1:100"},
+				ImportRTs: []v1alpha1.RouteTarget{"65001:100"},
+			}}},
+			want: []frr.L2VNIConfig{{
+				VNI:       100,
+				ExportRTs: []string{"65000:100", "192.0.2.1:100"},
+				ImportRTs: []string{"65001:100"},
+			}},
+		},
+		{
+			name: "configured RD",
+			l2vnis: []v1alpha1.L2VNI{{Spec: v1alpha1.L2VNISpec{
+				VNI:              100,
+				RDAssignedNumber: new(int32(42)),
+			}}},
+			want: []frr.L2VNIConfig{{
+				VNI:                100,
+				RouteDistinguisher: "10.0.0.1:42",
+				ExportRTs:          []string{},
+				ImportRTs:          []string{},
+			}},
+		},
+		{
+			name: "configured RD with explicit route targets",
+			l2vnis: []v1alpha1.L2VNI{{Spec: v1alpha1.L2VNISpec{
+				VNI:              100,
+				RDAssignedNumber: new(int32(42)),
+				ExportRTs:        []v1alpha1.RouteTarget{"65000:100", "192.0.2.1:100"},
+				ImportRTs:        []v1alpha1.RouteTarget{"65001:100"},
+			}}},
+			want: []frr.L2VNIConfig{{
+				VNI:                100,
+				RouteDistinguisher: "10.0.0.1:42",
+				ExportRTs:          []string{"65000:100", "192.0.2.1:100"},
+				ImportRTs:          []string{"65001:100"},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, l2vniConfigsToFRR(tt.l2vnis, "10.0.0.1")); diff != "" {
+				t.Fatalf("l2vniConfigsToFRR() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -3344,12 +3588,17 @@ func TestAPItoFRRRawConfig(t *testing.T) {
 				Underlays:     baseUnderlay,
 				RawFRRConfigs: tt.rawFRRConfigs,
 			}
-			got, err := APItoFRR(apiConfig, 0, "debug")
+			converter := APIToFRRConverter{
+				NodeIndex:      0,
+				LogLevel:       "debug",
+				InterfaceNames: kernelDatapath,
+			}
+			got, err := converter.Convert(apiConfig)
 			if err != nil {
-				t.Fatalf("APItoFRR() unexpected error: %v", err)
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
 			}
 			if !cmp.Equal(got.RawConfig, tt.wantSnippets) {
-				t.Errorf("APItoFRR() RawConfig diff: %s", cmp.Diff(got.RawConfig, tt.wantSnippets))
+				t.Errorf("APIToFRRConverter.Convert() RawConfig diff: %s", cmp.Diff(got.RawConfig, tt.wantSnippets))
 			}
 		})
 	}
@@ -3456,13 +3705,18 @@ func TestAPItoFRRRawConfigWithoutUnderlay(t *testing.T) {
 				L3VNIs:        tt.l3VNIs,
 				L3Passthrough: tt.l3Passthrough,
 			}
-			got, err := APItoFRR(apiConfig, 0, "debug")
+			converter := APIToFRRConverter{
+				NodeIndex:      0,
+				LogLevel:       "debug",
+				InterfaceNames: kernelDatapath,
+			}
+			got, err := converter.Convert(apiConfig)
 			if err != nil {
-				t.Fatalf("APItoFRR() unexpected error: %v", err)
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
 			}
 
 			if !cmp.Equal(got, wantConfig) {
-				t.Errorf("APItoFRR() diff: %s", cmp.Diff(got, wantConfig))
+				t.Errorf("APIToFRRConverter.Convert() diff: %s", cmp.Diff(got, wantConfig))
 			}
 		})
 	}
@@ -3515,9 +3769,14 @@ func TestAPItoFRRGracefulRestart(t *testing.T) {
 			config := APIConfigData{
 				Underlays: []v1alpha1.Underlay{*u},
 			}
-			got, err := APItoFRR(config, 0, "")
+			converter := APIToFRRConverter{
+				NodeIndex:      0,
+				LogLevel:       "",
+				InterfaceNames: kernelDatapath,
+			}
+			got, err := converter.Convert(config)
 			if err != nil {
-				t.Fatalf("APItoFRR() unexpected error: %v", err)
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
 			}
 
 			if !cmp.Equal(got.Underlay.GracefulRestart, tt.want) {
@@ -3844,9 +4103,14 @@ func TestAPItoFRRRouteReflector(t *testing.T) {
 			config := APIConfigData{
 				Underlays: []v1alpha1.Underlay{*u},
 			}
-			got, err := APItoFRR(config, 0, "")
+			converter := APIToFRRConverter{
+				NodeIndex:      0,
+				LogLevel:       "",
+				InterfaceNames: kernelDatapath,
+			}
+			got, err := converter.Convert(config)
 			if err != nil {
-				t.Fatalf("APItoFRR() unexpected error: %v", err)
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
 			}
 
 			if !cmp.Equal(got.Underlay.RouteReflector, tt.want) {
@@ -3872,13 +4136,160 @@ func TestAPItoFRRListenLimit(t *testing.T) {
 		Underlays: []v1alpha1.Underlay{underlay},
 	}
 	BGPListenLimit = 512
-	got, err := APItoFRR(config, 0, "")
+	converter := APIToFRRConverter{
+		NodeIndex:      0,
+		LogLevel:       "",
+		InterfaceNames: kernelDatapath,
+	}
+	got, err := converter.Convert(config)
 	if err != nil {
-		t.Fatalf("APItoFRR() unexpected error: %v", err)
+		t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
 	}
 
 	if got.Underlay.ListenLimit != 512 {
 		t.Errorf("ListenLimit = %d, want 512", got.Underlay.ListenLimit)
+	}
+}
+
+func TestAPItoFRRISISTunnelEndpointFamilies(t *testing.T) {
+	tests := []struct {
+		name  string
+		cidrs []string
+		want  frr.ISISInterface
+	}{
+		{
+			name:  "IPv4",
+			cidrs: []string{"192.0.2.0/24"},
+			want:  frr.ISISInterface{Name: "vtep-lo", IPv4: true, IsPassive: true},
+		},
+		{
+			name:  "IPv6",
+			cidrs: []string{"2001:db8::/64"},
+			want:  frr.ISISInterface{Name: "vtep-lo", IPv6: true, IsPassive: true},
+		},
+		{
+			name:  "dual stack",
+			cidrs: []string{"192.0.2.0/24", "2001:db8::/64"},
+			want:  frr.ISISInterface{Name: "vtep-lo", IPv4: true, IPv6: true, IsPassive: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := APIConfigData{
+				Underlays: []v1alpha1.Underlay{
+					{
+						Spec: v1alpha1.UnderlaySpec{
+							ASN:            65000,
+							TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{CIDRs: tt.cidrs},
+							ISIS:           &v1alpha1.ISISConfig{BaseNet: "49.0001.0002.0003.0004.00"},
+						},
+					},
+				},
+			}
+			converter := APIToFRRConverter{InterfaceNames: kernelDatapath}
+			got, err := converter.Convert(config)
+			if err != nil {
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
+			}
+			want := []frr.ISISInterface{tt.want}
+			if diff := cmp.Diff(want, got.Underlay.ISIS.Interfaces); diff != "" {
+				t.Errorf("ISIS interfaces diff (-want +got): %s", diff)
+			}
+		})
+	}
+}
+
+func TestAPItoFRRDatapath(t *testing.T) {
+	underlay := v1alpha1.Underlay{
+		ObjectMeta: metav1.ObjectMeta{Name: "underlay", Namespace: "openperouter-system"},
+		Spec: v1alpha1.UnderlaySpec{
+			ASN: 64514,
+			Interfaces: []v1alpha1.UnderlayInterface{
+				{Type: v1alpha1.UnderlayInterfaceTypeNetworkDevice, NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "toswitch1"}},
+				{Type: v1alpha1.UnderlayInterfaceTypeNetworkDevice, NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "toswitch2"}},
+			},
+			Neighbors: []v1alpha1.Neighbor{
+				{ASN: new(int64(64512)), Interface: new("toswitch1")},
+				{ASN: new(int64(64512)), Interface: new("eth9")},
+				{ASN: new(int64(64520)), Address: new("2001:db8:1234::1")},
+			},
+			TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{CIDRs: []string{"2001:db8:1234:5678::/64"}},
+			ISIS: &v1alpha1.ISISConfig{
+				BaseNet: "49.0001.0002.0003.0004.00",
+				Interfaces: []v1alpha1.ISISInterface{
+					{Name: "toswitch1", IPFamily: new(v1alpha1.IPFamilyDualStack)},
+					{Name: "eth9", IPFamily: new(v1alpha1.IPFamilyIPv6)},
+				},
+			},
+			SRV6: &v1alpha1.SRV6Config{
+				Locator: v1alpha1.SRV6Locator{BasePrefix: "fd00:0:32::/48", Format: "usid-f3216"},
+			},
+		},
+	}
+	config := APIConfigData{Underlays: []v1alpha1.Underlay{underlay}}
+
+	tests := []struct {
+		name               string
+		datapath           InterfaceNameTranslator
+		wantISISInterfaces []frr.ISISInterface
+		wantNeighbors      []neighborInterface
+	}{
+		{
+			name:     "kernel datapath keeps the interface names",
+			datapath: kernelDatapath,
+			wantISISInterfaces: []frr.ISISInterface{
+				{Name: "eth9", IPv6: true},
+				{Name: "toswitch1", IPv4: true, IPv6: true},
+				{Name: "toswitch2", IPv6: true},
+				{Name: "vtep-lo", IPv6: true, IsPassive: true},
+			},
+			wantNeighbors: []neighborInterface{
+				{ID: "toswitch1", Interface: "toswitch1"},
+				{ID: "eth9", Interface: "eth9"},
+				{ID: "2001:db8:1234::1"},
+			},
+		},
+		{
+			name:     "renamed interfaces in ISIS and neighbors",
+			datapath: testDatapath{underlayPrefix: "u_"},
+			wantISISInterfaces: []frr.ISISInterface{
+				{Name: "u_eth9", IPv6: true},
+				{Name: "u_toswitch1", IPv4: true, IPv6: true},
+				{Name: "u_toswitch2", IPv6: true},
+				{Name: "vtep-lo", IPv6: true, IsPassive: true},
+			},
+			wantNeighbors: []neighborInterface{
+				{ID: "u_toswitch1", Interface: "u_toswitch1"},
+				{ID: "u_eth9", Interface: "u_eth9"},
+				{ID: "2001:db8:1234::1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := APIToFRRConverter{
+				NodeIndex:      0,
+				LogLevel:       "",
+				InterfaceNames: tt.datapath,
+			}
+			got, err := converter.Convert(config)
+			if err != nil {
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
+			}
+
+			if diff := cmp.Diff(tt.wantISISInterfaces, got.Underlay.ISIS.Interfaces); diff != "" {
+				t.Errorf("ISIS interfaces diff: %s", diff)
+			}
+
+			gotNeighbors := []neighborInterface{}
+			for _, n := range got.Underlay.Neighbors {
+				gotNeighbors = append(gotNeighbors, neighborInterface{ID: n.ID, Interface: n.Interface})
+			}
+			if diff := cmp.Diff(tt.wantNeighbors, gotNeighbors); diff != "" {
+				t.Errorf("neighbors diff (-want +got): %s", diff)
+			}
+		})
 	}
 }
 
@@ -3990,9 +4401,14 @@ func TestAPItoFRRListenRange(t *testing.T) {
 			config := APIConfigData{
 				Underlays: []v1alpha1.Underlay{*u},
 			}
-			got, err := APItoFRR(config, 0, "")
+			converter := APIToFRRConverter{
+				NodeIndex:      0,
+				LogLevel:       "",
+				InterfaceNames: kernelDatapath,
+			}
+			got, err := converter.Convert(config)
 			if err != nil {
-				t.Fatalf("APItoFRR() unexpected error: %v", err)
+				t.Fatalf("APIToFRRConverter.Convert() unexpected error: %v", err)
 			}
 
 			if !cmp.Equal(got.Underlay.Neighbors, tt.wantNeighbors) {
@@ -4022,4 +4438,224 @@ func TestNeighborID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestL3VNIConfigsToFRR(t *testing.T) {
+	tests := []struct {
+		name string
+		vni  v1alpha1.L3VNI
+		want []frr.L3VNIConfig
+	}{
+		{
+			name: "automatic RD with automatic route targets without host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					ExportRTs: []string{},
+					ImportRTs: []string{},
+				},
+			},
+		},
+		{
+			name: "automatic RD with automatic route targets with dual-stack host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				HostSession: &v1alpha1.HostSession{
+					ASN: 65000, HostASN: new(int64(65001)), LocalCIDRs: []string{"192.168.2.0/24", "2001:db8::/64"},
+				},
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					ExportRTs:       []string{},
+					ImportRTs:       []string{},
+					LocalNeighbor:   &frr.NeighborConfig{Addr: "192.168.2.2", ID: "192.168.2.2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
+					ToAdvertiseIPv6: []string{},
+				},
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					ExportRTs:       []string{},
+					ImportRTs:       []string{},
+					LocalNeighbor:   &frr.NeighborConfig{Addr: "2001:db8::2", ID: "2001:db8::2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4: []string{},
+					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
+				},
+			},
+		},
+		{
+			name: "automatic RD with explicit route targets without host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				ExportRTs: []v1alpha1.RouteTarget{"65000:100"},
+				ImportRTs: []v1alpha1.RouteTarget{"65001:100"},
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					ExportRTs: []string{"65000:100"},
+					ImportRTs: []string{"65001:100"},
+				},
+			},
+		},
+		{
+			name: "automatic RD with explicit route targets with dual-stack host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				ExportRTs: []v1alpha1.RouteTarget{"65000:100"},
+				ImportRTs: []v1alpha1.RouteTarget{"65001:100"},
+				HostSession: &v1alpha1.HostSession{
+					ASN: 65000, HostASN: new(int64(65001)), LocalCIDRs: []string{"192.168.2.0/24", "2001:db8::/64"},
+				},
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					ExportRTs:       []string{"65000:100"},
+					ImportRTs:       []string{"65001:100"},
+					LocalNeighbor:   &frr.NeighborConfig{Addr: "192.168.2.2", ID: "192.168.2.2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4: []string{"192.168.2.2/32"},
+					ToAdvertiseIPv6: []string{},
+				},
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					ExportRTs:       []string{"65000:100"},
+					ImportRTs:       []string{"65001:100"},
+					LocalNeighbor:   &frr.NeighborConfig{Addr: "2001:db8::2", ID: "2001:db8::2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4: []string{},
+					ToAdvertiseIPv6: []string{"2001:db8::2/128"},
+				},
+			},
+		},
+		{
+			name: "configured RD with automatic route targets without host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				RDAssignedNumber: new(int32(42)),
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					RouteDistinguisher: "10.0.0.1:42",
+					ExportRTs:          []string{},
+					ImportRTs:          []string{},
+				},
+			},
+		},
+		{
+			name: "configured RD with automatic route targets with dual-stack host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				RDAssignedNumber: new(int32(42)),
+				HostSession: &v1alpha1.HostSession{
+					ASN: 65000, HostASN: new(int64(65001)), LocalCIDRs: []string{"192.168.2.0/24", "2001:db8::/64"},
+				},
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					RouteDistinguisher: "10.0.0.1:42",
+					ExportRTs:          []string{},
+					ImportRTs:          []string{},
+					LocalNeighbor:      &frr.NeighborConfig{Addr: "192.168.2.2", ID: "192.168.2.2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4:    []string{"192.168.2.2/32"},
+					ToAdvertiseIPv6:    []string{},
+				},
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					RouteDistinguisher: "10.0.0.1:42",
+					ExportRTs:          []string{},
+					ImportRTs:          []string{},
+					LocalNeighbor:      &frr.NeighborConfig{Addr: "2001:db8::2", ID: "2001:db8::2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4:    []string{},
+					ToAdvertiseIPv6:    []string{"2001:db8::2/128"},
+				},
+			},
+		},
+		{
+			name: "configured RD with explicit route targets without host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				RDAssignedNumber: new(int32(42)),
+				ExportRTs:        []v1alpha1.RouteTarget{"65000:100"},
+				ImportRTs:        []v1alpha1.RouteTarget{"65001:100"},
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					RouteDistinguisher: "10.0.0.1:42",
+					ExportRTs:          []string{"65000:100"},
+					ImportRTs:          []string{"65001:100"},
+				},
+			},
+		},
+		{
+			name: "configured RD with explicit route targets with dual-stack host session",
+			vni: v1alpha1.L3VNI{Spec: v1alpha1.L3VNISpec{
+				VNI: 200, VRF: "red",
+				RDAssignedNumber: new(int32(42)),
+				ExportRTs:        []v1alpha1.RouteTarget{"65000:100"},
+				ImportRTs:        []v1alpha1.RouteTarget{"65001:100"},
+				HostSession: &v1alpha1.HostSession{
+					ASN: 65000, HostASN: new(int64(65001)), LocalCIDRs: []string{"192.168.2.0/24", "2001:db8::/64"},
+				},
+			}},
+			want: []frr.L3VNIConfig{
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					RouteDistinguisher: "10.0.0.1:42",
+					ExportRTs:          []string{"65000:100"},
+					ImportRTs:          []string{"65001:100"},
+					LocalNeighbor:      &frr.NeighborConfig{Addr: "192.168.2.2", ID: "192.168.2.2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4:    []string{"192.168.2.2/32"},
+					ToAdvertiseIPv6:    []string{},
+				},
+				{
+					ASN: 65000, VNI: 200, VRF: "red", RouterID: "10.0.0.1",
+					RouteDistinguisher: "10.0.0.1:42",
+					ExportRTs:          []string{"65000:100"},
+					ImportRTs:          []string{"65001:100"},
+					LocalNeighbor:      &frr.NeighborConfig{Addr: "2001:db8::2", ID: "2001:db8::2", ASN: mustNewPeerASNFromNumber(65001)},
+					ToAdvertiseIPv4:    []string{},
+					ToAdvertiseIPv6:    []string{"2001:db8::2/128"},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := l3vniToFRR(tt.vni, "10.0.0.1", 65000, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("l3vniToFRR() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// neighborInterface holds the neighbor fields that depend on the interface
+// names the datapath exposes to FRR.
+type neighborInterface struct {
+	ID        string
+	Interface string
+}
+
+// testDatapath exposes the interfaces to FRR prefixed by underlayPrefix,
+// except for the tunnel endpoint interface.
+type testDatapath struct {
+	underlayPrefix string
+}
+
+var kernelDatapath = testDatapath{}
+
+func (d testDatapath) InterfaceNameForFRR(name string) string {
+	if name == hostnetwork.TunnelLoopback {
+		return name
+	}
+	return d.underlayPrefix + name
 }

@@ -26,6 +26,22 @@ func TestValidateL2VNICreate(t *testing.T) {
 		errorString string
 	}{
 		{
+			name:  "duplicate RD assignment",
+			nodes: []*v1.Node{{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}},
+
+			l2vnis: []*v1alpha1.L2VNI{
+				{
+					ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "existing"},
+					Spec:       v1alpha1.L2VNISpec{VNI: 100, RDAssignedNumber: new(int32(42))},
+				},
+			},
+			newL2VNI: &v1alpha1.L2VNI{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "new"},
+				Spec:       v1alpha1.L2VNISpec{VNI: 200, RDAssignedNumber: new(int32(42))},
+			},
+			errorString: "duplicate configured rdAssignedNumber 42: L2VNI/new conflicts with L2VNI/existing",
+		},
+		{
 			name: "webhook passes (pre-existing l3vni in same VRF)",
 			nodes: []*v1.Node{
 				{
@@ -216,56 +232,6 @@ func TestValidateL2VNICreate(t *testing.T) {
 				},
 			},
 			errorString: "duplicate vni",
-		},
-		{
-			name: "testing conversion.ValidateL2VNIsForNodes is hit - duplicate VNI due to L3VPN",
-			nodes: []*v1.Node{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "node1",
-						Labels: map[string]string{
-							"nodeName": "node1",
-						},
-					},
-				},
-			},
-			l3vpns: []*v1alpha1.L3VPN{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "default",
-						Name:      "existingL3VPN",
-					},
-					Spec: v1alpha1.L3VPNSpec{
-						VRF:              "existing",
-						RDAssignedNumber: 100,
-						ImportRTs:        []v1alpha1.RouteTarget{"65000:100"},
-						NodeSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"nodeName": "node1",
-							},
-						},
-					},
-				},
-			},
-			newL2VNI: &v1alpha1.L2VNI{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "default",
-					Name:      "newL2VNI",
-				},
-				Spec: v1alpha1.L2VNISpec{
-					RoutingDomain: &v1alpha1.RoutingDomain{
-						Type:  v1alpha1.RoutingDomainTypeL3VPN,
-						L3VPN: &v1alpha1.L3VPNReference{Name: "existingL3VPN"},
-					},
-					VNI: 100,
-					NodeSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"nodeName": "node1",
-						},
-					},
-				},
-			},
-			errorString: "validation failed: duplicate VNIs found in L2VNIs for node \"node1\": L2VNI/newL2VNI: duplicate vni 100:L3VPN/existingL3VPN",
 		},
 		{
 			name: "testing conversion.ValidateVRFsForNodes is hit - subnet overlap in VRF",
@@ -481,6 +447,7 @@ func TestValidateL2VNIUpdate(t *testing.T) {
 			errorString: "duplicate vni",
 		},
 	}
+
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			l2vnis := objectsFromResources(tc.l2vnis)
@@ -513,5 +480,33 @@ func TestValidateL2VNIUpdate(t *testing.T) {
 				t.Fatalf("expected error message %q to contain substring %q", err.Error(), tc.errorString)
 			}
 		})
+	}
+}
+
+func TestValidateL2VNICreateRejectsInvalidRouteTarget(t *testing.T) {
+	node := &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
+	client, err := setupFakeWebhookClient(objectsFromResources([]*v1.Node{node}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	originalWebhookClient := WebhookClient
+	originalLogger := Logger
+	defer func() {
+		WebhookClient = originalWebhookClient
+		Logger = originalLogger
+	}()
+	WebhookClient = client
+	Logger, _ = logging.New("debug")
+
+	err = validateL2VNICreate(&v1alpha1.L2VNI{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-route-target", Namespace: "default"},
+		Spec: v1alpha1.L2VNISpec{
+			VNI:       100,
+			ExportRTs: []v1alpha1.RouteTarget{"invalid"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `invalid route targets for vni "invalid-route-target"`) {
+		t.Fatalf("validateL2VNICreate() error = %v, want invalid route target error", err)
 	}
 }

@@ -35,6 +35,10 @@ func (n *noopDatapathConfigurator) Validate(_ conversion.APIConfigData) error {
 	return nil
 }
 
+func (n *noopDatapathConfigurator) InterfaceNameForFRR(name string) string {
+	return name
+}
+
 func TestReconcilePerResourceErrors(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -57,6 +61,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 					l3VNI("vni-a", "vrfA", 100),
 					l3VNI("vni-b", "vrfB", 200),
 				},
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -72,6 +77,8 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 					l3VPN("vni-a", "vrfA", 100),
 					l3VPN("vni-b", "vrfB", 200),
 				},
+				L3VNIs: nil,
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -88,6 +95,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L3VNIs: []v1alpha1.L3VNI{
 					l3VNI("first", "vrfA", 100),
 				},
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -99,13 +107,15 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 			},
 			expectedFailures: []v1alpha1.FailedResource{
 				{Kind: openpeerrors.KindL3VPN, Name: "second", Reason: v1alpha1.FailedResourceReasonValidationFailed,
-					Message: "duplicate rdAssignedNumber 100:L3VPN/first"},
+					Message: "duplicate configured rdAssignedNumber 100: L3VPN/second conflicts with L3VPN/first"},
 			},
 			wantConfig: conversion.APIConfigData{
 				Underlays: srv6Underlays(),
 				L3VPNs: []v1alpha1.L3VPN{
 					l3VPN("first", "vrfA", 100),
 				},
+				L3VNIs: nil,
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -122,6 +132,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L3VNIs: []v1alpha1.L3VNI{
 					l3VNI("good", "vrfA", 200),
 				},
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -140,6 +151,8 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L3VPNs: []v1alpha1.L3VPN{
 					l3VPN("good", "vrfA", 200),
 				},
+				L3VNIs: nil,
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -180,6 +193,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 					l2VNI("connected", l3vpnRoutingDomain("l3-a"), 200),
 					l2VNI("disconnected", nil, 201),
 				},
+				L3VNIs: nil,
 			},
 		},
 		{
@@ -196,6 +210,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L2VNIs: []v1alpha1.L2VNI{
 					l2VNI("first", nil, 200),
 				},
+				L3VNIs: nil,
 			},
 		},
 		{
@@ -223,32 +238,6 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 			},
 		},
 		{
-			name:      "cross-type VNI conflict skips L2VNI (L3VPN)",
-			underlays: srv6Underlays(),
-			l3VPNs: []v1alpha1.L3VPN{
-				l3VPN("conflict-l3", "vrfB", 300),
-				l3VPN("good-l3", "vrfA", 100),
-			},
-			l2VNIs: []v1alpha1.L2VNI{
-				l2VNI("conflict-l2", nil, 300),
-				l2VNI("good-l2", nil, 200),
-			},
-			expectedFailures: []v1alpha1.FailedResource{
-				{Kind: openpeerrors.KindL2VNI, Name: "conflict-l2", Reason: v1alpha1.FailedResourceReasonValidationFailed,
-					Message: "duplicate vni 300:L3VPN/conflict-l3"},
-			},
-			wantConfig: conversion.APIConfigData{
-				Underlays: srv6Underlays(),
-				L3VPNs: []v1alpha1.L3VPN{
-					l3VPN("conflict-l3", "vrfB", 300),
-					l3VPN("good-l3", "vrfA", 100),
-				},
-				L2VNIs: []v1alpha1.L2VNI{
-					l2VNI("good-l2", nil, 200),
-				},
-			},
-		},
-		{
 			name: "more than one passthrough skips all",
 			l3Passthroughs: []v1alpha1.L3Passthrough{
 				{ObjectMeta: metav1.ObjectMeta{Name: "pt-a"}},
@@ -259,6 +248,10 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 					Message: "can't have more than one l3passthrough per node"},
 				{Kind: openpeerrors.KindL3Passthrough, Name: "pt-b", Reason: v1alpha1.FailedResourceReasonValidationFailed,
 					Message: "can't have more than one l3passthrough per node"},
+			},
+			wantConfig: conversion.APIConfigData{
+				L3VNIs: nil,
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -275,6 +268,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L3VNIs: []v1alpha1.L3VNI{
 					l3VNI("first", "same-vrf", 100),
 				},
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -293,6 +287,8 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L3VPNs: []v1alpha1.L3VPN{
 					l3VPN("first", "same-vrf", 100),
 				},
+				L3VNIs: nil,
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -339,6 +335,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L2VNIs: []v1alpha1.L2VNI{
 					l2VNI("good-l2", l3vpnRoutingDomain("good-l3"), 200),
 				},
+				L3VNIs: nil,
 			},
 		},
 		{
@@ -358,6 +355,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L2VNIs: []v1alpha1.L2VNI{
 					l2VNI("good-l2", l3vpnRoutingDomain("good-l3"), 200),
 				},
+				L3VNIs: nil,
 			},
 		},
 		{
@@ -453,6 +451,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L2VNIs: []v1alpha1.L2VNI{
 					l2VNI("good-l2", nil, 200),
 				},
+				L3VNIs: nil,
 			},
 		},
 		{
@@ -499,6 +498,8 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 						},
 					},
 				}},
+				L3VNIs: nil,
+				L2VNIs: nil,
 			},
 		},
 		{
@@ -557,6 +558,104 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 				L2VNIs: []v1alpha1.L2VNI{
 					l2VNIWithGateway("good-l2", l3vpnRoutingDomain("good-l3"), 300, []string{"10.0.1.1/24"}),
 				},
+				L3VNIs: nil,
+			},
+		},
+		{
+			name:      "different resource kinds share configured RD numbers",
+			underlays: srv6Underlays(),
+			l3VPNs:    []v1alpha1.L3VPN{l3VPN("shared-vpn", "vpn", 700), l3VPN("vni-number-vpn", "vpn2", 100)},
+			l3VNIs: []v1alpha1.L3VNI{{
+				ObjectMeta: metav1.ObjectMeta{Name: "shared-l3vni"},
+				Spec: v1alpha1.L3VNISpec{
+					VNI:              100,
+					VRF:              "shared-l3vni",
+					RDAssignedNumber: new(int32(700)),
+				},
+			}},
+			l2VNIs: []v1alpha1.L2VNI{{
+				ObjectMeta: metav1.ObjectMeta{Name: "shared"},
+				Spec: v1alpha1.L2VNISpec{
+					VNI:              700,
+					RDAssignedNumber: new(int32(700)),
+				},
+			}, {
+				ObjectMeta: metav1.ObjectMeta{Name: "valid"},
+				Spec: v1alpha1.L2VNISpec{
+					VNI: 300,
+				},
+			}},
+			wantConfig: conversion.APIConfigData{
+				Underlays: srv6Underlays(),
+				L3VNIs: []v1alpha1.L3VNI{{
+					ObjectMeta: metav1.ObjectMeta{Name: "shared-l3vni"},
+					Spec: v1alpha1.L3VNISpec{
+						VNI:              100,
+						VRF:              "shared-l3vni",
+						RDAssignedNumber: new(int32(700)),
+					},
+				}}, L2VNIs: []v1alpha1.L2VNI{{
+					ObjectMeta: metav1.ObjectMeta{Name: "shared"},
+					Spec:       v1alpha1.L2VNISpec{VNI: 700, RDAssignedNumber: new(int32(700))},
+				}, {
+					ObjectMeta: metav1.ObjectMeta{Name: "valid"},
+					Spec: v1alpha1.L2VNISpec{
+						VNI: 300,
+					},
+				}},
+				L3VPNs: []v1alpha1.L3VPN{l3VPN("shared-vpn", "vpn", 700), l3VPN("vni-number-vpn", "vpn2", 100)},
+			},
+		},
+		{
+			name: "configured RD collisions reported before dependency removal",
+			l3VNIs: []v1alpha1.L3VNI{{
+				ObjectMeta: metav1.ObjectMeta{Name: "a"},
+				Spec: v1alpha1.L3VNISpec{
+					VNI:              100,
+					VRF:              "red",
+					RDAssignedNumber: new(int32(700)),
+				},
+			}, {
+				ObjectMeta: metav1.ObjectMeta{Name: "b"},
+				Spec: v1alpha1.L3VNISpec{
+					VNI:              200,
+					VRF:              "blue",
+					RDAssignedNumber: new(int32(700)),
+				},
+			}},
+			l2VNIs: []v1alpha1.L2VNI{{
+				ObjectMeta: metav1.ObjectMeta{Name: "dependent"},
+				Spec: v1alpha1.L2VNISpec{
+					VNI: 300,
+					RoutingDomain: &v1alpha1.RoutingDomain{
+						Type:  v1alpha1.RoutingDomainTypeL3VNI,
+						L3VNI: &v1alpha1.L3VNIReference{Name: "b"},
+					},
+					RDAssignedNumber: new(int32(800)),
+				},
+			}, {
+				ObjectMeta: metav1.ObjectMeta{Name: "standalone"},
+				Spec: v1alpha1.L2VNISpec{
+					VNI:              400,
+					RDAssignedNumber: new(int32(800)),
+				},
+			}},
+			expectedFailures: []v1alpha1.FailedResource{
+				{Kind: openpeerrors.KindL3VNI, Name: "b", Reason: v1alpha1.FailedResourceReasonValidationFailed,
+					Message: "duplicate configured rdAssignedNumber 700: L3VNI/b conflicts with L3VNI/a"},
+				{Kind: openpeerrors.KindL2VNI, Name: "standalone", Reason: v1alpha1.FailedResourceReasonValidationFailed,
+					Message: "duplicate configured rdAssignedNumber 800: L2VNI/standalone conflicts with L2VNI/dependent"},
+				{Kind: openpeerrors.KindL2VNI, Name: "dependent", Reason: v1alpha1.FailedResourceReasonDependencyFailed,
+					Message: `referenced L3VNI "b" not found`},
+			},
+			wantConfig: conversion.APIConfigData{L3VNIs: []v1alpha1.L3VNI{{
+				ObjectMeta: metav1.ObjectMeta{Name: "a"},
+				Spec: v1alpha1.L3VNISpec{
+					VNI:              100,
+					VRF:              "red",
+					RDAssignedNumber: new(int32(700)),
+				},
+			}}, L2VNIs: []v1alpha1.L2VNI{},
 			},
 		},
 	}
@@ -595,6 +694,7 @@ func TestReconcilePerResourceErrors(t *testing.T) {
 }
 
 func TestReconcileFrrReloadFailure(t *testing.T) {
+	resetFRRConfigCache(t)
 	reconcileErr := Reconcile(context.Background(), conversion.APIConfigData{}, 0, "",
 		"", "", failingUpdater, &noopDatapathConfigurator{}, configureFRR)
 	if reconcileErr == nil {
@@ -626,6 +726,10 @@ func (r *recordingDatapathConfigurator) Validate(_ conversion.APIConfigData) err
 	return nil
 }
 
+func (r *recordingDatapathConfigurator) InterfaceNameForFRR(name string) string {
+	return name
+}
+
 // TestReconcileAppliesFRRConfigBeforeDatapath pins the ordering between the FRR
 // configuration and the datapath. The kernel objects must only be created once FRR
 // already references them: bgpd handles ZEBRA_VNI_ADD in bgp_evpn_local_vni_add(),
@@ -654,6 +758,7 @@ func TestReconcileAppliesFRRConfigBeforeDatapath(t *testing.T) {
 // TestReconcileSkipsDatapathOnFrrReloadFailure ensures no kernel object is created
 // when FRR could not be configured, so that the datapath never gets ahead of FRR.
 func TestReconcileSkipsDatapathOnFrrReloadFailure(t *testing.T) {
+	resetFRRConfigCache(t)
 	var steps []string
 
 	reconcileErr := Reconcile(context.Background(), conversion.APIConfigData{}, 0, "",

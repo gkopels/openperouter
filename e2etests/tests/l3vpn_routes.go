@@ -90,7 +90,7 @@ var _ = Describe("SRV6 routes between bgp and the fabric", Ordered, func() {
 		// Create the SRv6 underlay.
 		Expect(Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{
-				infra.UnderlaySRv6,
+				infra.Underlay(infra.SRv6),
 			},
 		})).To(Succeed())
 
@@ -199,9 +199,11 @@ var _ = Describe("SRV6 routes between bgp and the fabric", Ordered, func() {
 			checkHostRouteEncap(routers, l3vpnBlue, leafSRV6VRFBluePrefixes, frr.HEncaps)
 
 			By("updating underlay encapsulation to encap reduced")
+			underlayEncapReduced := infra.Underlay(infra.SRv6)
+			underlayEncapReduced.Spec.SRV6.EncapBehavior = new(v1alpha1.HEncapsRed)
 			Expect(Updater.Update(config.Resources{
 				Underlays: []v1alpha1.Underlay{
-					infra.UnderlaySRv6EncapRed,
+					underlayEncapReduced,
 				},
 			})).To(Succeed())
 
@@ -212,7 +214,7 @@ var _ = Describe("SRV6 routes between bgp and the fabric", Ordered, func() {
 			By("updating underlay encapsulation to encap")
 			Expect(Updater.Update(config.Resources{
 				Underlays: []v1alpha1.Underlay{
-					infra.UnderlaySRv6,
+					infra.Underlay(infra.SRv6),
 				},
 			})).To(Succeed())
 
@@ -229,6 +231,60 @@ var _ = Describe("SRV6 routes between bgp and the fabric", Ordered, func() {
 			Expect(infra.LeafSRV6Config.ChangePrefixes(emptyPrefixes, emptyPrefixes, emptyPrefixes)).To(Succeed())
 			checkRouteFromLeaf(infra.LeafSRV6Config, l3vpnRed, !Contains, leafSRV6VRFRedPrefixes)
 			checkRouteFromLeaf(infra.LeafSRV6Config, l3vpnBlue, !Contains, leafSRV6VRFBluePrefixes)
+		})
+
+		It("announces correct L3VPN SIDs to the fabric", func() {
+			checkSid := func(l3vpns ...v1alpha1.L3VPN) {
+				expectedBehaviorsForVRF := map[string]map[string]struct{}{}
+				for _, l3vpn := range l3vpns {
+					if slices.Contains(l3vpn.Spec.Features, v1alpha1.UDT4UDT6) {
+						expectedBehaviorsForVRF[l3vpn.Spec.VRF] = map[string]struct{}{
+							"uDT4": {},
+							"uDT6": {},
+						}
+						continue
+					}
+					expectedBehaviorsForVRF[l3vpn.Spec.VRF] = map[string]struct{}{
+						"uDT46": {},
+					}
+				}
+				for exec := range routers.GetExecutors() {
+					By(fmt.Sprintf("checking SIDs announced by router %s, mustContain %+v", exec.Name(), expectedBehaviorsForVRF))
+					Eventually(func() (map[string]map[string]struct{}, error) {
+						l3vpnSids, err := frr.L3VPNSidInfo(exec)
+						if err != nil {
+							return nil, fmt.Errorf("failed to get L3VPN SIDs from %s: %w", exec.Name(), err)
+						}
+						gotBehaviorsForVRF := map[string]map[string]struct{}{}
+						for _, l3vpnSid := range l3vpnSids {
+							if l3vpnSid.Context.VrfName == "" {
+								continue
+							}
+							if gotBehaviorsForVRF[l3vpnSid.Context.VrfName] == nil {
+								gotBehaviorsForVRF[l3vpnSid.Context.VrfName] = map[string]struct{}{}
+							}
+							gotBehaviorsForVRF[l3vpnSid.Context.VrfName][l3vpnSid.Behavior] = struct{}{}
+						}
+						return gotBehaviorsForVRF, nil
+					}, 1*time.Minute, time.Second).WithOffset(1).Should(Equal(expectedBehaviorsForVRF))
+				}
+			}
+
+			By("checking that correct SIDs are present")
+			checkSid(l3vpnRed, l3vpnBlue)
+
+			l3vpnRedWithUDT4UDT6 := l3vpnRed.DeepCopy()
+			l3vpnRedWithUDT4UDT6.Spec.Features = []v1alpha1.L3VPNFeature{v1alpha1.UDT4UDT6}
+
+			By("Updating the red L3VPN Custom Resource")
+			Expect(Updater.Update(config.Resources{
+				L3VPNs: []v1alpha1.L3VPN{
+					*l3vpnRedWithUDT4UDT6,
+				},
+			})).To(Succeed())
+
+			By("checking that correct SIDs are present")
+			checkSid(*l3vpnRedWithUDT4UDT6, l3vpnBlue)
 		})
 
 	})
@@ -432,7 +488,7 @@ var _ = Describe("SRV6 routes between bgp and the fabric with iBGP testing e2e i
 	var cs clientset.Interface
 	var routers openperouter.Routers
 
-	underlay := infra.UnderlaySRv6.DeepCopy()
+	underlay := infra.Underlay(infra.SRv6)
 	underlay.Spec.ASN = 64520
 
 	l3vpnRed := v1alpha1.L3VPN{
@@ -473,7 +529,7 @@ var _ = Describe("SRV6 routes between bgp and the fabric with iBGP testing e2e i
 
 		Expect(Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{
-				*underlay,
+				underlay,
 			},
 		})).To(Succeed())
 

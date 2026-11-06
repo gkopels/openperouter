@@ -16,6 +16,7 @@ import (
 	"github.com/openperouter/openperouter/e2etests/pkg/k8s"
 	"github.com/openperouter/openperouter/e2etests/pkg/k8sclient"
 	"github.com/openperouter/openperouter/e2etests/pkg/openperouter"
+	"github.com/openperouter/openperouter/e2etests/pkg/validate"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -27,6 +28,7 @@ var _ = Describe("Neighbor passwordSecret", Ordered, func() {
 		rotatedPassword     = "RotatedSecret456"
 		secretName          = "bgp-auth-test"
 		customKeySecretName = "bgp-auth-test-custom-key"
+		customKey           = "bgp-password"
 	)
 
 	var cs clientset.Interface
@@ -70,29 +72,10 @@ var _ = Describe("Neighbor passwordSecret", Ordered, func() {
 		})).To(Succeed())
 
 		By("creating the underlay with passwordSecret referencing the Secret")
-		underlay := v1alpha1.Underlay{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "underlay",
-				Namespace: openperouter.Namespace,
-			},
-			Spec: v1alpha1.UnderlaySpec{
-				ASN: 64514,
-				Interfaces: []v1alpha1.UnderlayInterface{
-					{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "toswitch1"}},
-				},
-				TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{
-					CIDRs: []string{"100.65.0.0/24"},
-				},
-				Neighbors: []v1alpha1.Neighbor{
-					{
-						ASN:            new(int64(64512)),
-						Address:        new("192.168.11.2"),
-						PasswordSecret: &v1alpha1.SecretKeyRef{Name: secretName},
-					},
-				},
-			},
-		}
-
+		underlay := infra.Underlay(infra.Default)
+		underlay.Spec.Interfaces = underlay.Spec.Interfaces[:1]
+		underlay.Spec.Neighbors = underlay.Spec.Neighbors[:1]
+		underlay.Spec.Neighbors[0].PasswordSecret = &v1alpha1.SecretKeyRef{Name: secretName}
 		Expect(Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{underlay},
 		})).To(Succeed())
@@ -102,13 +85,13 @@ var _ = Describe("Neighbor passwordSecret", Ordered, func() {
 		for _, node := range nodes {
 			neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			validateSessionWithNeighbor(
+			validate.SessionWithNeighbor(
 				exec,
-				validationParameters{
-					fromName:    infra.KindLeaf,
-					toName:      node.Name,
-					neighborIP:  neighborIP,
-					established: Established,
+				validate.SessionParameters{
+					FromName:    infra.KindLeaf,
+					ToName:      node.Name,
+					NeighborIP:  neighborIP,
+					Established: Established,
 				},
 			)
 		}
@@ -125,21 +108,19 @@ var _ = Describe("Neighbor passwordSecret", Ordered, func() {
 		for _, node := range nodes {
 			neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			validateSessionWithNeighbor(
+			validate.SessionWithNeighbor(
 				exec,
-				validationParameters{
-					fromName:    infra.KindLeaf,
-					toName:      node.Name,
-					neighborIP:  neighborIP,
-					established: Established,
+				validate.SessionParameters{
+					FromName:    infra.KindLeaf,
+					ToName:      node.Name,
+					NeighborIP:  neighborIP,
+					Established: Established,
 				},
 			)
 		}
 	})
 
 	It("should resolve password from a custom Secret key", func() {
-		const customKey = "bgp-password"
-
 		By("creating an Opaque Secret with the password under a custom key")
 		Expect(
 			k8s.CreateOpaqueSecret(cs, customKeySecretName, openperouter.Namespace, customKey, bgpPassword),
@@ -151,29 +132,10 @@ var _ = Describe("Neighbor passwordSecret", Ordered, func() {
 		})).To(Succeed())
 
 		By("creating the underlay with passwordSecret referencing the custom key")
-		underlay := v1alpha1.Underlay{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "underlay",
-				Namespace: openperouter.Namespace,
-			},
-			Spec: v1alpha1.UnderlaySpec{
-				ASN: 64514,
-				Interfaces: []v1alpha1.UnderlayInterface{
-					{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "toswitch1"}},
-				},
-				TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{
-					CIDRs: []string{"100.65.0.0/24"},
-				},
-				Neighbors: []v1alpha1.Neighbor{
-					{
-						ASN:            new(int64(64512)),
-						Address:        new("192.168.11.2"),
-						PasswordSecret: &v1alpha1.SecretKeyRef{Name: customKeySecretName, Key: new(customKey)},
-					},
-				},
-			},
-		}
-
+		underlay := infra.Underlay(infra.Default)
+		underlay.Spec.Interfaces = underlay.Spec.Interfaces[:1]
+		underlay.Spec.Neighbors = underlay.Spec.Neighbors[:1]
+		underlay.Spec.Neighbors[0].PasswordSecret = &v1alpha1.SecretKeyRef{Name: customKeySecretName, Key: new(customKey)}
 		Expect(Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{underlay},
 		})).To(Succeed())
@@ -183,13 +145,13 @@ var _ = Describe("Neighbor passwordSecret", Ordered, func() {
 		for _, node := range nodes {
 			neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			validateSessionWithNeighbor(
+			validate.SessionWithNeighbor(
 				exec,
-				validationParameters{
-					fromName:    infra.KindLeaf,
-					toName:      node.Name,
-					neighborIP:  neighborIP,
-					established: Established,
+				validate.SessionParameters{
+					FromName:    infra.KindLeaf,
+					ToName:      node.Name,
+					NeighborIP:  neighborIP,
+					Established: Established,
 				},
 			)
 		}

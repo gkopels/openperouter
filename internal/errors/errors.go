@@ -18,6 +18,14 @@ const (
 	KindL3Passthrough = v1alpha1.FailedResourceKind("L3Passthrough")
 )
 
+// Matches FailedResource.Message's CRD maxLength validation.
+const maxFailedResourceMessageLength = 500
+
+// ErrTransient marks a setup failure caused by the state of the host at the
+// time of the call, such as OVSDB being unreachable, rather than by the
+// configuration. The same configuration can succeed on a later attempt.
+var ErrTransient = errors.New("transient host failure")
+
 // ResourceError represents a per-resource error (e.g., bad VRF name, duplicate VNI).
 // These are reported in status.failedResources via CollectFailures.
 type ResourceError struct {
@@ -33,7 +41,12 @@ func CollectFailures(err error) []v1alpha1.FailedResource {
 	var out []v1alpha1.FailedResource
 	for _, e := range unwrapAll(err) {
 		if ve, ok := e.(*ResourceError); ok {
-			out = append(out, ve.Obj)
+			failure := ve.Obj
+			message := []rune(failure.Message)
+			if len(message) > maxFailedResourceMessageLength {
+				failure.Message = string(message[:maxFailedResourceMessageLength])
+			}
+			out = append(out, failure)
 		}
 	}
 	return out

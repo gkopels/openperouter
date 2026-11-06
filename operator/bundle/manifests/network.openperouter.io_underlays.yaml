@@ -155,6 +155,26 @@ spec:
                         The device can be of any kind (physical NIC, bridge, macvlan, etc.).
                         Must be set when type is "NetworkDevice".
                       properties:
+                        acceleratedConfig:
+                          description: acceleratedConfig sets optional grout port
+                            parameters. Only valid when --datapath=grout.
+                          properties:
+                            qSize:
+                              description: |-
+                                qSize is the descriptor ring size for each receive queue. Larger
+                                rings absorb traffic bursts at the cost of memory.
+                              format: int32
+                              maximum: 32768
+                              minimum: 64
+                              type: integer
+                            rxQueues:
+                              description: rxQueues is the number of receive queues
+                                to allocate on the DPDK port.
+                              format: int32
+                              maximum: 64
+                              minimum: 1
+                              type: integer
+                          type: object
                         interfaceName:
                           description: |-
                             interfaceName is the name of the host network device to move into
@@ -210,10 +230,12 @@ spec:
                       features enables ISIS boolean features.
                       Supported features are:
                       advertisePassiveOnly: configures ISIS to advertise only prefixes that belong to passive interfaces.
+                      multiTopology: configures multi-topology mode for IPv4 and IPv6.
                     items:
                       description: ISISFeature represents a single ISIS feature.
                       enum:
                       - advertisePassiveOnly
+                      - multiTopology
                       maxLength: 128
                       minLength: 1
                       type: string
@@ -502,8 +524,8 @@ spec:
                         port is the port to dial when establishing the session.
                         Defaults to 179.
                       format: int32
-                      maximum: 16384
-                      minimum: 0
+                      maximum: 65535
+                      minimum: 1
                       type: integer
                     properties:
                       description: |-
@@ -724,7 +746,7 @@ spec:
                   cidrs:
                     description: |-
                       cidrs is a list of CIDRs to be used to assign IPs to the local tunnel endpoint on
-                      each node. IPs derived from these CIDRs will be assigned to the local loopback.
+                      each node. IPs derived from these CIDRs will be assigned to the tunnel endpoint interface.
                       At least one IPv4 or IPv6 CIDR is required. At most one of each family may be specified.
                     items:
                       type: string

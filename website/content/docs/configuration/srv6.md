@@ -86,6 +86,22 @@ SRv6 reachability.
 IS-IS with IPv6 is automatically enabled for all interfaces listed in the
 `interfaces` field of the underlay configuration.
 
+#### IS-IS Features
+
+The `features` list enables optional IS-IS behaviors:
+
+- **advertisePassiveOnly**: Only advertise prefixes belonging to passive interfaces.
+- **multiTopology**: Maintain separate SPF topologies for IPv4 and IPv6 (RFC 5120), allowing each address family to use independent link sets.
+
+```yaml
+  isis:
+    baseNet: "49.0001.0002.0003.0004.00"
+    level: 1
+    features:
+    - "advertisePassiveOnly"
+    - "multiTopology"
+```
+
 For the full list of IS-IS configuration fields, see the
 [ISISConfig API Reference]({{< ref "api-reference#isisconfig" >}}).
 
@@ -265,11 +281,10 @@ spec:
 - SRv6 **requires** IS-IS to be configured on the Underlay.
 - SRv6 **requires** at least one IPv6 CIDR in `tunnelEndpoint.cidrs`.
 - L3VPN VRF names must be unique across all L3VPNs on a node.
-- L3VPN `rdAssignedNumber` values must be unique across all L3VPNs.
-- L3VPN `rdAssignedNumber` values **must not overlap** with any L3VNI
-  `vni` value, regardless of the VRF. Depending on the configuration,
-  both values may be used as part of the route distinguisher and route
-  target, so overlaps could cause routing conflicts.
+- L3VPN `rdAssignedNumber` values must be unique among L3VPNs on the same
+  node. L2VNIs and L3VNIs may reuse these numbers. Each selected node combines
+  the assigned number with its own router ID to form the RD. When `exportRTs`
+  is omitted, the existing default export route target uses this number.
 
 ## Per-Node Configuration
 

@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   feature-needs-docs:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'kind/feature')
     steps:
       - name: Checkout Source
@@ -42,7 +42,7 @@ jobs:
           fi
 
   static-security-analysis:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     env:
       GO111MODULE: on
     steps:
@@ -60,8 +60,8 @@ jobs:
           repo-checkout: false
 
   check-generated:
-    runs-on: ubuntu-22.04
-    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-26.04
+    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -79,21 +79,27 @@ jobs:
           make checkuncommitted
 
       - name: Helm doc generate
-        uses: docker://jnorwood/helm-docs:v1.10.0
+        uses: docker://jnorwood/helm-docs:v1.14.2
 
       - name: Check if docs are different
         run: make checkuncommitted
 
   commitlint:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.user.login != 'dependabot[bot]' &&
+       github.event.pull_request.user.login != 'renovate[bot]')
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: ./commitlint.config.cjs
 
   verify-release:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -104,12 +110,12 @@ jobs:
           go-version-file: "go.mod"
           cache: true
       - name: Helm doc generate
-        uses: docker://jnorwood/helm-docs:v1.10.0
+        uses: docker://jnorwood/helm-docs:v1.14.2
       - name: Verify release process
         run: hack/release/verify_release.sh
 
   build-kind-node-image:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     outputs:
       kind-node-version: ${{ steps.build.outputs.kind-node-version }}
     steps:
@@ -120,7 +126,7 @@ jobs:
         uses: ./.github/workflows/composite/build-kind-node-image
 
   unit-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     needs: build-kind-node-image
     steps:
       - name: Checkout
@@ -132,9 +138,7 @@ jobs:
           cache: true
 
       - name: Install kernel modules
-        run: |
-          sudo apt-get update
-          sudo apt-get install linux-modules-extra-$(uname -r)
+        run: hack/install-kernel-modules.sh
 
       - name: Free Disk Space
         working-directory: ${{ github.workspace }}
@@ -159,15 +163,52 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9.3.0
         with:
-          version: v2.9.0
+          version: v2.14.0
 
       - name: Verify bundle manifests
         run: |
           make bundle
           git diff --exit-code operator/bundle
 
-  build-test-images:
+  check-benchmark:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      BENCHMARK_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            hack/benchmarkcheck/go.sum
+      - name: Install kernel modules
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-modules-extra-$(uname -r)
+          for module in dummy vrf bridge veth vxlan; do sudo modprobe "$module"; done
+      - name: Test benchmark comparison
+        run: go -C hack/benchmarkcheck test ./...
+      - name: Check benchmark regressions
+        run: make check-benchmark
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results
+          path: bin/benchmark-results/
+          retention-days: 7
+
+  build-test-images:
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: true
     steps:
@@ -193,7 +234,7 @@ jobs:
           path: /tmp/openperouter.tar
 
   build-grout-images:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: true
     steps:
@@ -219,7 +260,7 @@ jobs:
           path: /tmp/openperouter-grout.tar
 
   e2etests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     env:
       NODE_IMAGE: quay.io/openperouter/kind-node-openperouter:${{ needs.build-kind-node-image.outputs.kind-node-version }}
     needs:
@@ -254,15 +295,17 @@ jobs:
           cache: true
 
       - name: Install kernel modules
-        run: |
-          sudo apt-get update
-          sudo apt-get install linux-modules-extra-$(uname -r)
+        run: hack/install-kernel-modules.sh
 
-      # rp_filter is off on CI runners; enable it so kind nodes inherit a production-like default
-      - name: Enable rp_filter
+      - name: Log martians
         run: |
-          sudo sysctl -w net.ipv4.conf.default.rp_filter=1
           sudo sysctl -w net.ipv4.conf.default.log_martians=1
+
+      # Kind nodes share the host's per-user inotify limits, including systemd and OVS.
+      - name: Increase inotify limits
+        run: |
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+          sudo sysctl -w fs.inotify.max_user_instances=512
 
       - name: Disable containerd image store
         run: |
@@ -292,6 +335,9 @@ jobs:
 
       - name: Deploy the cluster
         run: |
+          bash hack/capture-kind-boot-logs.sh /tmp/kind_logs &
+          BOOT_LOG_PID=$!
+          trap 'kill "$BOOT_LOG_PID" 2>/dev/null || true; wait "$BOOT_LOG_PID" || true' EXIT
           MAKE_RULE="deploy"
           IMG_REPO="quay.io/openperouter"
           if [ ${{ matrix.deployment }} = "helm" ]; then MAKE_RULE="deploy-helm"; fi
@@ -326,19 +372,29 @@ jobs:
             kubectl -n openperouter-system wait --for=condition=Ready pods -l "component in (controller,router,nodemarker)" --timeout 300s;
           fi
 
+      - name: Make sure that sysctl settings are set correctly
+        run: |
+          if [[ $(sysctl net.ipv4.conf.default.rp_filter | awk '{print $NF}') != "1" ]]; then
+            echo "default rp_filter not set to 1"
+            exit 1
+          fi
+          if [[ $(sysctl net.ipv4.conf.all.rp_filter | awk '{print $NF}') != "1" ]]; then
+            echo "all rp_filter not set to 1"
+            exit 1
+          fi
 
       - name: Run e2e tests
         run: |
           if [ ${{ matrix.deployment }} = "systemdmode" ]; then
             export TEST_ARGS="--systemdmode"
-            export GINKGO_ARGS="--skip='North/south traffic after FRR container restart' --skip='Alpha: Named netns' --skip='Beta: Named netns'"
+            export GINKGO_ARGS="--label-filter='!grout-only && !podmode-only' --skip='North/south traffic after FRR container restart' --skip='Alpha: Named netns' --skip='Beta: Named netns'"
             make e2etests
           elif [ ${{ matrix.deployment }} = "hostmode-boot" ]; then
             make e2etests-hostmode-boot
           elif [ ${{ matrix.deployment }} = "helm-grout" ] || [ ${{ matrix.deployment }} = "grout" ] || [ ${{ matrix.deployment }} = "operator-grout" ]; then
-            make e2etests GINKGO_ARGS="--label-filter='grout-support'" TEST_ARGS="--groutmode"
+            make e2etests GINKGO_ARGS="--label-filter='grout-support || grout-only'" TEST_ARGS="--groutmode"
           else
-            export GINKGO_ARGS="--label-filter='!systemdmode'"
+            export GINKGO_ARGS="--label-filter='!systemdmode && !grout-only'"
             make e2etests
           fi
 
@@ -373,9 +429,88 @@ jobs:
         with:
           artifact-name: kind-logs-${{ matrix.deployment }}
 
+  e2etests-qemu-grout:
+    runs-on: ubuntu-26.04
+    needs:
+      - build-grout-images
+    permissions:
+      contents: read
+    steps:
+      - name: Free Disk Space
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo apt-get clean
+          echo "Disk space after cleanup:"
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Install kernel modules
+        run: hack/install-kernel-modules.sh
+
+      - name: Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils genisoimage sshpass
+
+      - name: Verify KVM support
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "ERROR: /dev/kvm not available. KVM support is required."
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          echo "KVM is available."
+
+      - name: Download openperouter image
+        uses: actions/download-artifact@v8
+        with:
+          name: image-tar-openperouter-grout
+          path: image
+
+      - name: Load openperouter image
+        run: |
+          docker load -i image/openperouter-grout.tar
+
+      - name: Deploy the QEMU cluster
+        run: |
+          KUSTOMIZE_LAYER=grout \
+            make qemu-deploy IMG_TAG=main-grout
+
+      - name: Run QEMU e2e tests
+        run: |
+          make qemu-e2etests
+
+      - name: Upload QEMU logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          retention-days: 5
+          name: qemu-e2e-logs
+          path: /tmp/kind_logs/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          make qemu-clean clean
+
   scale-tests:
     if: contains(github.event.pull_request.labels.*.name, 'run-scale-tests')
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     env:
       NODE_IMAGE: quay.io/openperouter/kind-node-openperouter:v1.32.2
     needs:
@@ -405,9 +540,13 @@ jobs:
           cache: true
 
       - name: Install kernel modules
+        run: hack/install-kernel-modules.sh
+
+      # Kind nodes share the host's per-user inotify limits, including systemd and OVS.
+      - name: Increase inotify limits
         run: |
-          sudo apt-get update
-          sudo apt-get install linux-modules-extra-$(uname -r)
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+          sudo sysctl -w fs.inotify.max_user_instances=512
 
       - name: Disable containerd image store
         run: |
@@ -454,12 +593,18 @@ jobs:
         run: sleep 60
 
       - name: Run scale tests
+        id: scale-tests
         run: |
           make scale-tests
 
       - name: Parse scale test report
-        if: ${{ always() }}
+        if: ${{ always() && steps.scale-tests.outcome != 'skipped' }}
         run: |
+          set -o pipefail
+          if [[ ! -f /tmp/kind_logs/e2etests_scale_suite_scale-report.json ]]; then
+            echo "::warning::Scale report not found; skipping summary generation"
+            exit 0
+          fi
           make parse-scale-report | tee /tmp/kind_logs/scale-test-summary.txt
 
       - name: Upload scale test report

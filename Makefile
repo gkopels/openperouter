@@ -97,7 +97,7 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: fmt vet envtest $(LOCALBIN) kind-node-image-build ## Run tests.
+test: fmt vet envtest $(LOCALBIN) kind-node-image-build docker-build ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v e2etest) -coverprofile cover.out
 	@RUNASROOT_TESTS=""; \
 	for pkg in $$(grep -rl "//go:build runasroot" --include="*_test.go" $$(go list -f '{{.Dir}}' ./...) | xargs -I{} dirname {} | sort -u); do \
@@ -106,6 +106,12 @@ test: fmt vet envtest $(LOCALBIN) kind-node-image-build ## Run tests.
 		RUNASROOT_TESTS="$$RUNASROOT_TESTS /src/bin/$$name.test"; \
 	done; \
 	$(CONTAINER_ENGINE) run --rm --privileged -v $$(pwd):/src -w /src --entrypoint /src/hack/integration_tests.sh $(KIND_NODE_IMG) $$RUNASROOT_TESTS
+
+BENCHMARK_BASE ?= HEAD
+
+.PHONY: check-benchmark
+check-benchmark: benchmarkcheck ## Compare reconciliation benchmarks against BENCHMARK_BASE (requires Linux and root/sudo).
+	bash hack/check-benchmark.sh "$(BENCHMARK_BASE)"
 
 ##@ Build
 
@@ -129,7 +135,7 @@ BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	@if [ "$(CONTAINER_ENGINE)" = "podman" ]; then \
-		sudo $(CONTAINER_ENGINE) build  -t ${IMG} -f ${DOCKERFILE} .; \
+		sudo $(CONTAINER_ENGINE) build  -t ${IMG} -f ${DOCKERFILE} --security-opt label=disable .; \
 	else \
 		$(CONTAINER_ENGINE) build -t ${IMG} -f ${DOCKERFILE} .; \
 	fi
@@ -169,6 +175,13 @@ APIDOCSGEN ?= $(LOCALBIN)/crd-ref-docs
 HUGO ?= $(LOCALBIN)/hugo
 export KUBECONFIG=$(KUBECONFIG_PATH)
 
+.PHONY: benchmarkcheck
+benchmarkcheck: bin/benchmarkcheck ## Build the benchmark regression comparison tool.
+
+bin/benchmarkcheck: $(wildcard hack/benchmarkcheck/*.go) hack/benchmarkcheck/go.mod hack/benchmarkcheck/go.sum
+	mkdir -p bin
+	go -C hack/benchmarkcheck build -o "$(abspath $@)" .
+
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.0.0
 CONTROLLER_TOOLS_VERSION ?= v0.19.0
@@ -177,7 +190,7 @@ GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2
 KIND_VERSION ?= v0.27.0
 KIND_CLUSTER_NAME ?= pe-kind
 HELM_VERSION ?= v3.12.3
-HELM_DOCS_VERSION ?= v1.10.0
+HELM_DOCS_VERSION ?= v1.14.2
 APIDOCSGEN_VERSION ?= v0.3.0
 HUGO_VERSION ?= v0.147.8
 
@@ -337,7 +350,7 @@ $(KIND): $(LOCALBIN)
 	test -s $(LOCALBIN)/kind && $(LOCALBIN)/kind --version | grep -q $(KIND_VERSION) || \
 	GOBIN=$(LOCALBIN) go install sigs.k8s.io/kind@$(KIND_VERSION)
 
-.PHONY:
+.PHONY: crd-ref-docs
 crd-ref-docs: $(APIDOCSGEN) ## Download the api-doc-gen tool locally if necessary.
 $(APIDOCSGEN): $(LOCALBIN)
 	test -s $(LOCALBIN)/crd-ref-docs || \
@@ -369,7 +382,7 @@ e2e-bastion: ## Bastion OCP lifecycle: bridges+clab → e2etests → teardown (n
 .PHONY: e2etests-hostmode-boot
 e2etests-hostmode-boot: ginkgo kubectl create-export-logs ## Run e2e tests for hostmode boot scenario (static config first, then K8s API).
 	@echo "=== Running systemd_static_suite tests (static config only) ==="
-	$(GINKGO) -v $(GINKGO_ARGS) --json-report=e2e-report-systemd.json --output-dir=${KIND_EXPORT_LOGS} --timeout=3h ./e2etests/systemd_static_suite -- --kubectl=$(KUBECTL) $(TEST_ARGS)
+	$(GINKGO) -v $(GINKGO_ARGS) --json-report=e2e-report-systemd.json --output-dir=${KIND_EXPORT_LOGS} --timeout=3h ./e2etests/systemd_static_suite -- --kubectl=$(KUBECTL) $(TEST_ARGS) --reporterpath=${KIND_EXPORT_LOGS} 
 	@echo "=== Deploying controller to enable K8s API ==="
 	$(MAKE) deploy-controller KUSTOMIZE_LAYER=hostmode
 	@echo "=== Running passthrough tests (with K8s API available) ==="
@@ -421,6 +434,8 @@ load-on-kind: ## Load the docker image into the kind cluster.
 load-on-multi-cluster: ## Load the docker image into both kind clusters.
 	KIND=$(KIND) KUBECTL=$(KUBECTL) bash -c 'export KIND_CLUSTER_NAME=pe-kind-a && source clab/common.sh && load_local_image_to_kind ${IMG} router-a'
 	KIND=$(KIND) KUBECTL=$(KUBECTL) bash -c 'export KIND_CLUSTER_NAME=pe-kind-b && source clab/common.sh && load_local_image_to_kind ${IMG} router-b'
+
+include clab/qemu/Makefile
 
 ##@ Kind Node Image
 
@@ -485,12 +500,14 @@ generate-all-in-one: manifests kustomize ## Create manifests
 	cd config/pods && $(KUSTOMIZE) edit set image controller=${IMG}
 	cd config/pods && $(KUSTOMIZE) edit set namespace $(NAMESPACE)
 
+	# openpe.yaml is the only generated manifest: delete anything else so that
+	# check-generated fails when a branch brings back a removed one.
+	find config/all-in-one -type f ! -name openpe.yaml -delete
 	$(KUSTOMIZE) build config/default > config/all-in-one/openpe.yaml
-	$(KUSTOMIZE) build config/crio > config/all-in-one/crio.yaml
 
 .PHONY: helm-docs
 helm-docs:
-	$(CONTAINER_ENGINE) run --rm -v $$(pwd):/app:Z -w /app jnorwood/helm-docs:$(HELM_DOCS_VERSION) helm-docs
+	$(CONTAINER_ENGINE) run --rm -v $$(pwd):/app:Z -w /app docker.io/jnorwood/helm-docs:$(HELM_DOCS_VERSION) helm-docs
 
 .PHONY: api-docs
 api-docs: crd-ref-docs
@@ -532,11 +549,11 @@ build-website: hugo-download api-docs ## Build the website with API documentatio
 publish-website: ## Build and publish the website to gh-pages branch
 	hack/publish-website.sh
 
-.PHONY: demo-metallb-evpn
+.PHONY: demo-metallb
 demo-metallb:
 	examples/evpn/metallb/prepare.sh
 	
-.PHONY: demo-l2-evpn
+.PHONY: demo-l2
 demo-l2:
 	examples/evpn/layer2/prepare.sh
 
@@ -556,11 +573,11 @@ demo-metallb-l3vpn:
 demo-metallb-l3vpn-l2vni:
 	examples/l3vpn/layer2/prepare.sh
 
-.PHONY: demo-calico-evpn
+.PHONY: demo-calico
 demo-calico:
 	examples/evpn/calico/prepare.sh
 
-.PHONY: demo-kubevirt-evpn
+.PHONY: demo-kubevirt
 demo-kubevirt:
 	examples/evpn/kubevirt/prepare.sh
 
@@ -707,19 +724,23 @@ build-and-push-bundle-images: bundle-build bundle-push catalog-build catalog-pus
 
 .PHONY: grout-deploy
 grout-deploy: IMG_TAG=main-grout
-grout-deploy: export KUSTOMIZE_LAYER=grout
+grout-deploy: export KUSTOMIZE_LAYER=grout-test
 grout-deploy: kind deploy-cluster deploy-controller ## Deploy cluster and controller with grout dataplane.
 
 .PHONY: grout-deploy-operator-with-olm
 grout-deploy-operator-with-olm: IMG_TAG=main-grout
-grout-deploy-operator-with-olm: bundle kustomize kind clab-cluster load-on-kind deploy-olm grout-set-image-in-csv build-and-push-bundle-images deploy-operator-with-olm
+grout-deploy-operator-with-olm: bundle kustomize kind clab-cluster load-on-kind deploy-olm grout-set-csv-values build-and-push-bundle-images deploy-operator-with-olm
 
-grout-set-image-in-csv:
+grout-set-csv-values:
 	sed -i 's|quay.io/openperouter/router:main$$|quay.io/openperouter/router:main-grout|g' $(CSV_FILE)
+	sed -i '/name: GROUT_TEST_MODE/{n;s|value: "false"|value: "true"|}' $(CSV_FILE)
+	sed -i '/name: GROUT_TAP_UNDERLAY/{n;s|value: "false"|value: "true"|}' $(CSV_FILE)
+	sed -i '/name: GROUT_MAX_MTU/{n;s|value: "0"|value: "9500"|}' $(CSV_FILE)
 
 .PHONY: grout-deploy-helm
 grout-deploy-helm: IMG_TAG=main-grout
-grout-deploy-helm: HELM_ARGS=--set openperouter.datapath=grout
+grout-deploy-helm: HELM_ARGS=--set openperouter.datapath=grout --set openperouter.grout.testMode=true \
+	--set openperouter.grout.tapUnderlay=true --set openperouter.grout.maxMTU=9500
 grout-deploy-helm: helm kind deploy-cluster load-on-kind deploy-helm
 
 .PHONY: grout-docker-build

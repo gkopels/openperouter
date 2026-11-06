@@ -72,11 +72,46 @@ type OpenPERouterSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	BGPListenLimit *int32 `json:"bgpListenLimit,omitempty"`
+	// controllerMaxReconcileBackoffSeconds specifies the maximum retry delay in seconds
+	// after failed API reconciliation. When omitted, the controller uses its default rate limiter.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	ControllerMaxReconcileBackoffSeconds *int32 `json:"controllerMaxReconcileBackoffSeconds,omitempty"`
 	// datapath specifies the datapath to use. Allowed values are: kernel, grout. (default: kernel)
 	// +optional
 	// +default="kernel"
 	// +kubebuilder:validation:Enum=kernel;grout
 	Datapath *string `json:"datapath,omitempty"`
+	// priorityClassName is the priority class of all OpenPERouter pods
+	// (router, controller, nodemarker, hostbridge). Use system-node-critical,
+	// or system-cluster-critical where cluster policy requires it.
+	// +optional
+	PriorityClassName *string `json:"priorityClassName,omitempty"`
+	// resources overrides the resource requirements of the OpenPERouter
+	// containers. A container left unset keeps the chart defaults.
+	// +optional
+	Resources *ContainerResources `json:"resources,omitempty"`
+}
+
+// ContainerResources holds the resource requirements of the OpenPERouter
+// containers.
+type ContainerResources struct {
+	// controller is the controller container.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.claims) || self.claims.size() == 0",message="claims are not supported"
+	Controller *corev1.ResourceRequirements `json:"controller,omitempty"`
+	// nodemarker is the nodemarker container, which serves the webhooks.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.claims) || self.claims.size() == 0",message="claims are not supported"
+	NodeMarker *corev1.ResourceRequirements `json:"nodemarker,omitempty"`
+	// frr is the FRR container in router pods.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.claims) || self.claims.size() == 0",message="claims are not supported"
+	FRR *corev1.ResourceRequirements `json:"frr,omitempty"`
+	// reloader is the reloader container in router pods.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.claims) || self.claims.size() == 0",message="claims are not supported"
+	Reloader *corev1.ResourceRequirements `json:"reloader,omitempty"`
 }
 
 // OpenPERouterStatus defines the observed state of OpenPERouter

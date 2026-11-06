@@ -14,7 +14,7 @@ import (
 	"github.com/openperouter/openperouter/api/v1alpha1"
 	"github.com/openperouter/openperouter/internal/conversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 )
 
@@ -546,8 +546,11 @@ l2vnis:
 	if err == nil {
 		t.Fatal("expected validation error for L2VNI with bridge name and Managed lifecycle, got nil")
 	}
-	if !strings.Contains(err.Error(), "name must be set when lifecycle is External, and must not be set when it is Managed.") {
-		t.Errorf("expected error containing 'name must be set when lifecycle is External, and must not be set when it is Managed.', got: %v", err)
+	wantErrMsg := `failed to convert static config to API config: validation errors in static config: ` +
+		`v1alpha1.L2VNI: [].spec.hostMaster.linuxBridge: Invalid value: ` +
+		`name must be set when lifecycle is External, and must not be set when it is Managed.`
+	if !strings.Contains(err.Error(), wantErrMsg) {
+		t.Errorf("expected error containing %q, got: %v", wantErrMsg, err)
 	}
 }
 
@@ -597,9 +600,12 @@ underlays:
 			yaml: validSRv6Underlay,
 		},
 		{
-			name:       "invalid encapBehavior value",
-			yaml:       fmt.Sprintf("%s      encapBehavior: \"%s\"\n", validSRv6Underlay, "H.Encaps.Invalid"),
-			wantErrMsg: `Unsupported value: "H.Encaps.Invalid": supported values: "H.Encaps", "H.Encaps.Red"`,
+			name: "invalid encapBehavior value",
+			yaml: fmt.Sprintf("%s      encapBehavior: \"%s\"\n", validSRv6Underlay, "H.Encaps.Invalid"),
+			wantErrMsg: `failed to convert static config to API config: validation errors in static config: ` +
+				`[v1alpha1.Underlay: [].spec.srv6.encapBehavior: Too long: may not be more than 12 bytes, ` +
+				`v1alpha1.Underlay: [].spec.srv6.encapBehavior: Unsupported value: "H.Encaps.Invalid": supported ` +
+				`values: "H.Encaps", "H.Encaps.Red"`,
 		},
 		{
 			name: "srv6 without isis",
@@ -624,7 +630,8 @@ underlays:
         basePrefix: "fd00:0:32::/48"
         format: "usid-f3216"
 `,
-			wantErrMsg: "SRv6 can only be configured if isis is set",
+			wantErrMsg: `failed to convert static config to API config: validation errors in static config: ` +
+				`v1alpha1.Underlay: [].spec: Invalid value: SRv6 can only be configured if isis is set`,
 		},
 		{
 			name: "srv6 without ipv6 tunnel endpoint",
@@ -655,7 +662,9 @@ underlays:
         basePrefix: "fd00:0:32::/48"
         format: "usid-f3216"
 `,
-			wantErrMsg: "SRv6 requires at least one IPv6 CIDR in tunnelEndpoint.cidrs",
+			wantErrMsg: `failed to convert static config to API config: validation errors in static config: ` +
+				`v1alpha1.Underlay: [].spec: Invalid value: ` +
+				`SRv6 requires at least one IPv6 CIDR in tunnelEndpoint.cidrs`,
 		},
 	}
 
@@ -710,7 +719,9 @@ l2vnis:
         name: "mybr"
         lifecycle: Managed
 `,
-			wantContains: "name must be set when lifecycle is External, and must not be set when it is Managed.",
+			wantContains: `failed to convert static config to API config: validation errors in static config: ` +
+				`v1alpha1.L2VNI: [].spec.hostMaster.linuxBridge: Invalid value: ` +
+				`name must be set when lifecycle is External, and must not be set when it is Managed.`,
 		},
 	}
 
@@ -760,11 +771,18 @@ l2vnis:
 	}
 
 	errMsg := err.Error()
-	if !strings.Contains(errMsg, "asn") {
-		t.Errorf("expected error from underlay missing required ASN field, got: %v", err)
+	wantPrefix := `failed to convert static config to API config: validation errors in static config:`
+	if !strings.Contains(errMsg, wantPrefix) {
+		t.Errorf("expected error containing %q, got: %v", wantPrefix, err)
 	}
-	if !strings.Contains(errMsg, "name must be set when lifecycle is External, and must not be set when it is Managed.") {
-		t.Errorf("expected error from L2VNI bridge validation, got: %v", err)
+	wantUnderlayErr := `v1alpha1.Underlay: [].spec.asn: Required value`
+	if !strings.Contains(errMsg, wantUnderlayErr) {
+		t.Errorf("expected error containing %q, got: %v", wantUnderlayErr, err)
+	}
+	wantL2VNIErr := `v1alpha1.L2VNI: [].spec.hostMaster.linuxBridge: Invalid value: ` +
+		`name must be set when lifecycle is External, and must not be set when it is Managed.`
+	if !strings.Contains(errMsg, wantL2VNIErr) {
+		t.Errorf("expected error containing %q, got: %v", wantL2VNIErr, err)
 	}
 }
 
@@ -799,9 +817,158 @@ l2vnis:
 		t.Fatal("expected error for config with 1 valid underlay and 1 invalid L2VNI, got nil -- partial result should not be returned")
 	}
 
-	// Verify the error is about the L2VNI validation, not about the underlay
-	if !strings.Contains(err.Error(), "name must be set when lifecycle is External, and must not be set when it is Managed.") {
-		t.Errorf("expected L2VNI validation error, got: %v", err)
+	wantErr := `failed to convert static config to API config: validation errors in static config: ` +
+		`v1alpha1.L2VNI: [].spec.hostMaster.linuxBridge: Invalid value: ` +
+		`name must be set when lifecycle is External, and must not be set when it is Managed.`
+	if !strings.Contains(err.Error(), wantErr) {
+		t.Errorf("expected error containing %q, got: %v", wantErr, err)
+	}
+}
+
+func TestReadStaticConfigsL2VNIRDAssignedNumber(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name       string
+		number     string
+		wantErrStr string
+	}{
+		{name: "omitted"},
+		{name: "configured RD", number: "42"},
+		{
+			name:   "zero",
+			number: "0",
+			wantErrStr: "failed to convert static config to API config: validation errors in static config: " +
+				"v1alpha1.L2VNI: [].spec.rdAssignedNumber: Invalid value: 0: spec.rdAssignedNumber in " +
+				"body should be greater than or equal to 1",
+		},
+		{
+			name:   "negative",
+			number: "-1",
+			wantErrStr: "failed to convert static config to API config: validation errors in static config: " +
+				"v1alpha1.L2VNI: [].spec.rdAssignedNumber: Invalid value: -1: spec.rdAssignedNumber in" +
+				" body should be greater than or equal to 1",
+		},
+		{
+			name:   "above maximum",
+			number: "65536",
+			wantErrStr: "failed to convert static config to API config: validation errors in static config: " +
+				"v1alpha1.L2VNI: [].spec.rdAssignedNumber: Invalid value: 65536: spec.rdAssignedNumber" +
+				" in body should be less than or equal to 65535",
+		},
+		{
+			name:   "malformed",
+			number: "malformed",
+			wantErrStr: fmt.Sprintf("failed to read router configs: failed to parse YAML router config %s: error"+
+				" unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go struct"+
+				" field StaticL2VNI.L2VNIs.L2VNISpec.rdAssignedNumber of type int32", filepath.Join(dir, "openpe_rd.yaml")),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rdAssignedNumber := ""
+			if tt.number != "" {
+				rdAssignedNumber = "    rdAssignedNumber: " + tt.number
+			}
+			content := fmt.Sprintf(`l2vnis:
+  - vni: 300
+%s
+`, rdAssignedNumber)
+			writeYAMLFile(t, dir, "openpe_rd.yaml", content)
+			config, err := readStaticConfigs(dir, "node", "default")
+			if tt.wantErrStr != "" {
+				if err == nil || err.Error() != tt.wantErrStr {
+					t.Fatalf("expected error %q, got %v", tt.wantErrStr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected static configuration to load successfully, got error: %v", err)
+			}
+			got := config.L2VNIs[0].Spec.RDAssignedNumber
+			if tt.number == "" {
+				if got != nil {
+					t.Fatalf("omitted number became %d", *got)
+				}
+				return
+			}
+			if got == nil || fmt.Sprint(*got) != tt.number {
+				t.Fatalf("number %s was not preserved: %v", tt.number, got)
+			}
+		})
+	}
+}
+
+func TestReadStaticConfigsL3VNIRDAssignedNumber(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name       string
+		number     string
+		wantErrStr string
+	}{
+		{name: "omitted"},
+		{name: "configured RD", number: "42"},
+		{
+			name:   "zero",
+			number: "0",
+			wantErrStr: "failed to convert static config to API config: validation errors in static config: " +
+				"v1alpha1.L3VNI: [].spec.rdAssignedNumber: Invalid value: 0: spec.rdAssignedNumber in " +
+				"body should be greater than or equal to 1",
+		},
+		{
+			name:   "negative",
+			number: "-1",
+			wantErrStr: "failed to convert static config to API config: validation errors in static config: " +
+				"v1alpha1.L3VNI: [].spec.rdAssignedNumber: Invalid value: -1: spec.rdAssignedNumber in" +
+				" body should be greater than or equal to 1",
+		},
+		{
+			name:   "above maximum",
+			number: "65536",
+			wantErrStr: "failed to convert static config to API config: validation errors in static config: " +
+				"v1alpha1.L3VNI: [].spec.rdAssignedNumber: Invalid value: 65536: spec.rdAssignedNumber" +
+				" in body should be less than or equal to 65535",
+		},
+		{
+			name:   "malformed",
+			number: "malformed",
+			wantErrStr: fmt.Sprintf("failed to read router configs: failed to parse YAML router config %s: error"+
+				" unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go struct"+
+				" field StaticL3VNI.L3VNIs.L3VNISpec.rdAssignedNumber of type int32", filepath.Join(dir, "openpe_rd.yaml")),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rdAssignedNumber := ""
+			if tt.number != "" {
+				rdAssignedNumber = "    rdAssignedNumber: " + tt.number
+			}
+			content := fmt.Sprintf(`l3vnis:
+  - vni: 300
+    vrf: tenant
+%s
+`, rdAssignedNumber)
+			writeYAMLFile(t, dir, "openpe_rd.yaml", content)
+			config, err := readStaticConfigs(dir, "node", "default")
+			if tt.wantErrStr != "" {
+				if err == nil || err.Error() != tt.wantErrStr {
+					t.Fatalf("expected error %q, got %v", tt.wantErrStr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected static configuration to load successfully, got error: %v", err)
+			}
+			got := config.L3VNIs[0].Spec.RDAssignedNumber
+			if tt.number == "" {
+				if got != nil {
+					t.Fatalf("omitted number became %d", *got)
+				}
+				return
+			}
+			if got == nil || fmt.Sprint(*got) != tt.number {
+				t.Fatalf("number %s was not preserved: %v", tt.number, got)
+			}
+		})
 	}
 }
 
@@ -1084,8 +1251,6 @@ func TestStaticConfigToAPIConfig_EmptyConfig(t *testing.T) {
 }
 
 func TestValidateStaticNeighbors(t *testing.T) {
-	basePath := field.NewPath("underlays").Index(0).Child("neighbors")
-
 	tests := []struct {
 		name            string
 		neighbors       []static.StaticNeighbor
@@ -1136,46 +1301,10 @@ func TestValidateStaticNeighbors(t *testing.T) {
 			},
 			wantErrContains: "whitespace",
 		},
-		{
-			name: "duplicate address",
-			neighbors: []static.StaticNeighbor{
-				{Neighbor: v1alpha1.Neighbor{Address: new("10.0.0.1"), ASN: new(int64(64512))}},
-				{Neighbor: v1alpha1.Neighbor{Address: new("10.0.0.1"), ASN: new(int64(64513))}},
-			},
-			wantErrContains: "duplicate",
-		},
-		{
-			name: "same address different ports is duplicate",
-			neighbors: []static.StaticNeighbor{
-				{Neighbor: v1alpha1.Neighbor{Address: new("10.0.0.1"), ASN: new(int64(64512)), Port: new(int32(179))}},
-				{Neighbor: v1alpha1.Neighbor{Address: new("10.0.0.1"), ASN: new(int64(64513)), Port: new(int32(1179))}},
-			},
-			wantErrContains: "duplicate",
-		},
-		{
-			name: "nil address and interface",
-			neighbors: []static.StaticNeighbor{
-				{Neighbor: v1alpha1.Neighbor{ASN: new(int64(64512))}},
-			},
-			wantErrContains: "neither address nor interface",
-		},
-		{
-			name: "password clears passwordSecret",
-			neighbors: []static.StaticNeighbor{
-				{
-					Neighbor: v1alpha1.Neighbor{
-						Address:        new("10.0.0.1"),
-						ASN:            new(int64(64512)),
-						PasswordSecret: &v1alpha1.SecretKeyRef{Name: "my-secret"},
-					},
-					Password: new("staticpass"),
-				},
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := validateStaticNeighbors(tt.neighbors, basePath)
+			errs := validateStaticNeighbors(tt.neighbors)
 			if tt.wantErrContains != "" {
 				if len(errs) == 0 {
 					t.Fatal("expected validation error, got none")
@@ -1190,27 +1319,76 @@ func TestValidateStaticNeighbors(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// Verify passwordSecret was cleared when password takes priority.
-	t.Run("verify passwordSecret cleared", func(t *testing.T) {
-		neighbors := []static.StaticNeighbor{
-			{
-				Neighbor: v1alpha1.Neighbor{
-					Address:        new("10.0.0.1"),
-					ASN:            new(int64(64512)),
-					PasswordSecret: &v1alpha1.SecretKeyRef{Name: "my-secret"},
-				},
-				Password: new("staticpass"),
+func TestStaticUnderlaysToAPIClearsPasswordSecretWhenPlaintextSet(t *testing.T) {
+	underlays := []static.StaticUnderlaySpec{{
+		UnderlaySpec: v1alpha1.UnderlaySpec{
+			ASN: 64512,
+			Interfaces: []v1alpha1.UnderlayInterface{
+				{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "eth0"}},
 			},
-		}
-		errs := validateStaticNeighbors(neighbors, basePath)
-		if len(errs) > 0 {
-			t.Fatalf("unexpected errors: %v", errs.ToAggregate())
-		}
-		if neighbors[0].PasswordSecret != nil {
-			t.Error("expected PasswordSecret to be cleared, got non-nil")
-		}
-	})
+		},
+		Neighbors: []static.StaticNeighbor{{
+			Neighbor: v1alpha1.Neighbor{
+				Address:        new("10.0.0.1"),
+				ASN:            new(int64(64513)),
+				PasswordSecret: &v1alpha1.SecretKeyRef{Name: "my-secret"},
+			},
+			Password: new("staticpass"),
+		}},
+	}}
+
+	built, passwords, errs := staticUnderlaysToAPI(underlays, "node1", "ns", testNodeSelector("node1"))
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs.ToAggregate())
+	}
+	if built[0].Spec.Neighbors[0].PasswordSecret != nil {
+		t.Error("expected PasswordSecret cleared on the built underlay, got non-nil")
+	}
+	if passwords[conversion.NeighborID(built[0].Spec.Neighbors[0])] != "staticpass" {
+		t.Error("expected plaintext static password in the passwords map")
+	}
+}
+
+func TestStaticDuplicateNeighborRejectedAtReconcile(t *testing.T) {
+	underlays := []static.StaticUnderlaySpec{{
+		UnderlaySpec: v1alpha1.UnderlaySpec{
+			ASN: 64512,
+			Interfaces: []v1alpha1.UnderlayInterface{
+				{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "eth0"}},
+			},
+		},
+		Neighbors: []static.StaticNeighbor{
+			{Neighbor: v1alpha1.Neighbor{Address: new("10.0.0.1"), ASN: new(int64(64513))}},
+			{Neighbor: v1alpha1.Neighbor{Address: new("10.0.0.1"), ASN: new(int64(64514))}},
+		},
+	}}
+
+	built, _, errs := staticUnderlaysToAPI(underlays, "node1", "ns", testNodeSelector("node1"))
+	if len(errs) > 0 {
+		t.Fatalf("staticUnderlaysToAPI should not reject duplicates itself: %v", errs.ToAggregate())
+	}
+	if err := conversion.ValidateUnderlays(built); err == nil {
+		t.Fatal("expected ValidateUnderlays to reject duplicate static neighbors")
+	}
+}
+
+func TestStaticUnderlaysToAPIRejectsEmptyNeighbor(t *testing.T) {
+	underlays := []static.StaticUnderlaySpec{{
+		UnderlaySpec: v1alpha1.UnderlaySpec{
+			ASN: 64512,
+			Interfaces: []v1alpha1.UnderlayInterface{
+				{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "eth0"}},
+			},
+		},
+		Neighbors: []static.StaticNeighbor{{Neighbor: v1alpha1.Neighbor{ASN: new(int64(64513))}}},
+	}}
+
+	_, _, errs := staticUnderlaysToAPI(underlays, "node1", "ns", testNodeSelector("node1"))
+	if len(errs) == 0 {
+		t.Fatal("expected an empty neighbor to be rejected")
+	}
 }
 
 func TestStaticConfigPasswordsMap(t *testing.T) {
@@ -1299,4 +1477,48 @@ func TestStaticConfigInvalidPassword(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyDefaultsAndValidateToUnstructuredError(t *testing.T) {
+	type unconvertible struct {
+		Bad chan int `json:"bad"`
+	}
+	obj := &unconvertible{Bad: make(chan int)}
+	_, errs := applyDefaultsAndValidate(obj, underlayGVK)
+	if len(errs) == 0 {
+		t.Fatal("expected error for unconvertible type")
+	}
+	errMsg := errs.ToAggregate().Error()
+	wantErrMsg := `Internal error: converting to unstructured: routerconfiguration.unconvertible:`
+	if !strings.Contains(errMsg, wantErrMsg) {
+		t.Errorf("expected error containing %q, got: %s", wantErrMsg, errMsg)
+	}
+}
+
+func TestApplyDefaultsAndValidateApplyDefaultsError(t *testing.T) {
+	obj := &v1alpha1.Underlay{
+		Spec: v1alpha1.UnderlaySpec{
+			ASN: 64514,
+			Interfaces: []v1alpha1.UnderlayInterface{
+				{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "eth0"}},
+			},
+			Neighbors: []v1alpha1.Neighbor{
+				{ASN: new(int64(64512)), Address: new("192.168.11.2")},
+			},
+		},
+	}
+	unknownGVK := schema.GroupVersionKind{Group: "fake.io", Version: "v1", Kind: "Fake"}
+	_, errs := applyDefaultsAndValidate(obj, unknownGVK)
+	if len(errs) == 0 {
+		t.Fatal("expected error for unknown GVK")
+	}
+	errMsg := errs.ToAggregate().Error()
+	wantErrMsg := `Internal error: applying defaults: v1alpha1.Underlay: no CRD schema found for fake.io/v1, Kind=Fake`
+	if !strings.Contains(errMsg, wantErrMsg) {
+		t.Errorf("expected error containing %q, got: %s", wantErrMsg, errMsg)
+	}
+}
+
+func testNodeSelector(nodeName string) *metav1.LabelSelector {
+	return &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/hostname": nodeName}}
 }

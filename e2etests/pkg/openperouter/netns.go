@@ -10,8 +10,10 @@ import (
 	"github.com/openperouter/openperouter/e2etests/pkg/executor"
 )
 
-const NamedNetns = "perouter"
-const underlayPortNamePrefix = "u_"
+const (
+	NamedNetns              = "perouter"
+	TunnelEndpointInterface = "vtep-lo"
+)
 
 // NamedNetnsExists checks whether /var/run/netns/perouter is present on nodeName.
 func NamedNetnsExists(nodeName string) (bool, error) {
@@ -57,67 +59,34 @@ func DeleteNamedNetns(nodeName string) error {
 }
 
 // UnderlayConfigured checks whether the underlay is configured inside
-// the perouter netns on nodeName by looking for any IP addresses other than
-// the default loopback interfaces on the VTEP loopback (lo), and by checking
-// that `lo` is up.
+// the perouter netns on nodeName by looking for a global IP address on the
+// tunnel endpoint interface (vtep-lo), regardless of the interface state.
 func UnderlayConfigured(nodeName string) (bool, error) {
+	exists, err := NamedNetnsExists(nodeName)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+
 	exec := executor.ForNode(nodeName)
-
-	out, err := exec.Exec("ip", "netns", "list")
-	if err != nil {
-		return false, err
-	}
-	if !strings.Contains(out, NamedNetns) {
+	out, err := exec.Exec("ip", "netns", "exec", NamedNetns,
+		"ip", "-o", "address", "show", "dev", TunnelEndpointInterface, "scope", "global")
+	if strings.Contains(out, "does not exist") {
 		return false, nil
 	}
-
-	out, err = exec.Exec("ip", "netns", "exec", NamedNetns, "ip", "-o", "link", "show", "dev", "lo")
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to get %s addresses on %s: %w", TunnelEndpointInterface, nodeName, err)
 	}
-	if !strings.Contains(out, "LOOPBACK,UP,LOWER_UP") {
-		return false, nil
-	}
-
-	out, err = exec.Exec("ip", "netns", "exec", NamedNetns, "ip", "address", "show", "dev", "lo", "scope", "global")
-	if err != nil {
-		return false, err
-	}
-	if len(strings.TrimSpace(out)) > 0 {
-		return true, nil
-	}
-
-	// Check if some Grout underlay has been configured
-	out, err = exec.Exec("ip", "netns", "exec", NamedNetns, "ip", "-brief", "link", "show")
-	if err != nil {
-		return false, err
-	}
-	for line := range strings.SplitSeq(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 && strings.HasPrefix(fields[0], underlayPortNamePrefix) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return strings.TrimSpace(out) != "", nil
 }
 
-// underlayHostIfaces are the host ifaces checked by UnderlayVethsExists.
-var underlayHostIfaces = []string{"toswitch1", "toswitch2"}
-
-// SetUnderlayHostIfaces sets the host underlay ifaces for netns helpers.
-// Empty is a no-op (keeps Kind defaults).
-func SetUnderlayHostIfaces(ifaces []string) {
-	if len(ifaces) == 0 {
-		return
-	}
-	underlayHostIfaces = append([]string(nil), ifaces...)
-}
-
-// UnderlayVethsExists checks whether the underlay interfaces exist on nodeName,
+// InterfacesExists checks whether the underlay interfaces exist on nodeName,
 // either in the default netns or inside the perouter netns.
-func UnderlayVethsExists(nodeName string) bool {
+func InterfacesExists(nodeName string, ifaces []string) bool {
 	exec := executor.ForNode(nodeName)
-	for _, iface := range underlayHostIfaces {
+	for _, iface := range ifaces {
 		if _, err := exec.Exec("ip", "link", "show", iface); err == nil {
 			return true
 		}
@@ -126,6 +95,29 @@ func UnderlayVethsExists(nodeName string) bool {
 		}
 	}
 	return false
+}
+
+// UnderlaySysctls checks whether the provided sysctl settings are set on nodeName, inside the
+// perouter netns.
+func UnderlaySysctls(nodeName string, expectedSysctls map[string]string) error {
+	exec := executor.ForNode(nodeName)
+
+	for sysctlKey, expected := range expectedSysctls {
+		cmd := fmt.Sprintf("ip netns exec %s sysctl %s", NamedNetns, sysctlKey)
+		out, err := exec.Exec("/bin/bash", "-c", cmd)
+		if err != nil {
+			return fmt.Errorf("cmd %q: failed with err: %w", cmd, err)
+		}
+		s := strings.Split(out, "=")
+		if len(s) != 2 {
+			return fmt.Errorf("cmd %q: expected valid sysctl but got %q instead", cmd, out)
+		}
+		if got := strings.TrimSpace(s[1]); got != expected {
+			return fmt.Errorf("cmd %q: expected to get value %q but got %q instead", cmd, expected, got)
+		}
+	}
+
+	return nil
 }
 
 // deleteNetnsDevices lists all devices inside the perouter netns and deletes

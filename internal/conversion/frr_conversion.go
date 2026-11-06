@@ -14,6 +14,7 @@ import (
 
 	"github.com/openperouter/openperouter/api/v1alpha1"
 	"github.com/openperouter/openperouter/internal/frr"
+	"github.com/openperouter/openperouter/internal/hostnetwork"
 	"github.com/openperouter/openperouter/internal/ipam"
 	"github.com/openperouter/openperouter/internal/ipfamily"
 	"github.com/openperouter/openperouter/internal/networklayerprotocol"
@@ -21,11 +22,9 @@ import (
 )
 
 const (
-	isisProcessName      = "ISIS"
-	locatorName          = "MAIN"
-	loopbackName         = "lo"
-	advertisePassiveOnly = "advertisePassiveOnly"
-	passiveInterface     = "passive"
+	isisProcessName  = "ISIS"
+	locatorName      = "MAIN"
+	passiveInterface = "passive"
 )
 
 var (
@@ -91,12 +90,29 @@ func L3VPNWithGatewayIPs(cidrs []string) L3VPNOption {
 	}
 }
 
-func APItoFRR(config APIConfigData, nodeIndex int, logLevel string) (frr.Config, error) {
+// InterfaceNameTranslator translates the interface names used in the API to
+// the names FRR knows them by. It is needed by datapaths where FRR does not
+// peer over the network device itself (e.g. grout, where FRR sees the port the
+// device is attached to); kernel-based datapaths return the name verbatim.
+type InterfaceNameTranslator interface {
+	// InterfaceNameForFRR returns the name FRR knows an interface by.
+	InterfaceNameForFRR(name string) string
+}
+
+// APIToFRRConverter holds the node and datapath context the conversion of
+// the API configuration to the FRR one depends on.
+type APIToFRRConverter struct {
+	NodeIndex      int
+	LogLevel       string
+	InterfaceNames InterfaceNameTranslator
+}
+
+func (c APIToFRRConverter) Convert(config APIConfigData) (frr.Config, error) {
 	rawSnippets := rawConfigSnippets(config.RawFRRConfigs)
 	if len(rawSnippets) > 0 && len(config.Underlays) == 0 {
 		slog.Info("no underlay provided, applying raw configuration only")
 		return frr.Config{
-			Loglevel:  logLevel,
+			Loglevel:  c.LogLevel,
 			RawConfig: rawSnippets,
 		}, nil
 	}
@@ -108,12 +124,12 @@ func APItoFRR(config APIConfigData, nodeIndex int, logLevel string) (frr.Config,
 
 	underlay := config.Underlays[0]
 
-	routerID, err := routerIDFromUnderlay(underlay, nodeIndex)
+	routerID, err := routerIDFromUnderlay(underlay, c.NodeIndex)
 	if err != nil {
 		return frr.Config{}, fmt.Errorf("failed to get routerID: %w", err)
 	}
 
-	tunnelEndpoint, err := tunnelEndpointToFRR(underlay.Spec.TunnelEndpoint, nodeIndex)
+	tunnelEndpoint, err := tunnelEndpointToFRR(underlay.Spec.TunnelEndpoint, c.NodeIndex)
 	if err != nil {
 		return frr.Config{}, fmt.Errorf("failed to translate tunnel endpoint settings, err: %w", err)
 	}
@@ -123,17 +139,17 @@ func APItoFRR(config APIConfigData, nodeIndex int, logLevel string) (frr.Config,
 		return frr.Config{}, err
 	}
 
-	underlayConfigISIS, err := underlayISISToFRR(underlay.Spec.ISIS, underlayInterfaces, nodeIndex)
+	underlayConfigISIS, err := c.underlayISISToFRR(underlay.Spec.ISIS, underlayInterfaces, tunnelEndpoint)
 	if err != nil {
 		return frr.Config{}, fmt.Errorf("failed to translate ISIS settings, err: %w", err)
 	}
 
-	underlayConfigSegmentRouting, err := underlaySegmentRoutingToFRR(underlay.Spec.SRV6, nodeIndex, tunnelEndpoint)
+	underlayConfigSegmentRouting, err := underlaySegmentRoutingToFRR(underlay.Spec.SRV6, c.NodeIndex, tunnelEndpoint)
 	if err != nil {
 		return frr.Config{}, fmt.Errorf("failed to translate segment routing settings, err: %w", err)
 	}
 
-	neighbors, err := neighborsToFRR(
+	neighbors, err := c.neighborsToFRR(
 		underlay.Spec.Neighbors,
 		underlayConfigSegmentRouting,
 		config.L2VNIs,
@@ -166,18 +182,18 @@ func APItoFRR(config APIConfigData, nodeIndex int, logLevel string) (frr.Config,
 		return frr.Config{}, err
 	}
 
-	vniConfigs, err := vniConfigsToFRR(
+	l3VNIConfigs, err := l3vniConfigsToFRR(
 		config.L3VNIs,
 		routerID,
 		underlay.Spec.ASN,
-		nodeIndex,
+		c.NodeIndex,
 		vrfsWithL2Gateway,
 	)
 	if err != nil {
 		return frr.Config{}, err
 	}
 
-	passthroughConfig, err := passthroughToFRR(config.L3Passthrough, nodeIndex)
+	passthroughConfig, err := passthroughToFRR(config.L3Passthrough, c.NodeIndex)
 	if err != nil {
 		return frr.Config{}, fmt.Errorf("failed to translate passthrough to frr: %w", err)
 	}
@@ -186,7 +202,7 @@ func APItoFRR(config APIConfigData, nodeIndex int, logLevel string) (frr.Config,
 		config.L3VPNs,
 		routerID,
 		underlay.Spec.ASN,
-		nodeIndex,
+		c.NodeIndex,
 		vrfsWithL2Gateway,
 	)
 	if err != nil {
@@ -195,23 +211,45 @@ func APItoFRR(config APIConfigData, nodeIndex int, logLevel string) (frr.Config,
 
 	return frr.Config{
 		Underlay:    underlayConfig,
-		VNIs:        vniConfigs,
+		L2VNIs:      l2vniConfigsToFRR(config.L2VNIs, routerID),
+		L3VNIs:      l3VNIConfigs,
 		Passthrough: passthroughConfig,
 		BFDProfiles: bfdProfilesFromNeighbors(underlay.Spec.Neighbors),
 		VPNs:        vpnConfigs,
-		Loglevel:    logLevel,
+		Loglevel:    c.LogLevel,
 		RawConfig:   rawSnippets,
 	}, nil
 }
 
-func neighborsToFRR(apiNeighbors []v1alpha1.Neighbor, segmentRouting *frr.UnderlaySegmentRouting,
+func l2vniConfigsToFRR(l2vnis []v1alpha1.L2VNI, routerID string) []frr.L2VNIConfig {
+	var configs []frr.L2VNIConfig
+	for _, l2vni := range l2vnis {
+		// FRR discovers L2VNIs from host interfaces; only overrides need explicit configuration.
+		if len(l2vni.Spec.ExportRTs) == 0 && len(l2vni.Spec.ImportRTs) == 0 && l2vni.Spec.RDAssignedNumber == nil {
+			continue
+		}
+		rd := ""
+		if l2vni.Spec.RDAssignedNumber != nil {
+			rd = routeDistinguisher(routerID, *l2vni.Spec.RDAssignedNumber)
+		}
+		configs = append(configs, frr.L2VNIConfig{
+			RouteDistinguisher: rd,
+			VNI:                l2vni.Spec.VNI,
+			ExportRTs:          convertRTsToSliceOfStrings(l2vni.Spec.ExportRTs),
+			ImportRTs:          convertRTsToSliceOfStrings(l2vni.Spec.ImportRTs),
+		})
+	}
+	return configs
+}
+
+func (c APIToFRRConverter) neighborsToFRR(apiNeighbors []v1alpha1.Neighbor, segmentRouting *frr.UnderlaySegmentRouting,
 	l2vnis []v1alpha1.L2VNI, l3vnis []v1alpha1.L3VNI, l3vpns []v1alpha1.L3VPN, l3passthroughs []v1alpha1.L3Passthrough,
 	tunnelEndpoint *v1alpha1.TunnelEndpointConfig,
 	passwords map[string]string,
 ) ([]frr.NeighborConfig, error) {
 	neighbors := make([]frr.NeighborConfig, 0, len(apiNeighbors))
 	for _, n := range apiNeighbors {
-		frrNeigh, err := neighborToFRR(
+		frrNeigh, err := c.neighborToFRR(
 			n,
 			l2vnis,
 			l3vnis,
@@ -300,7 +338,7 @@ func tunnelEndpointToFRR(tunnelEndpointConfig *v1alpha1.TunnelEndpointConfig, no
 	return tunnelEndpoint, nil
 }
 
-func vniConfigsToFRR(
+func l3vniConfigsToFRR(
 	l3vnis []v1alpha1.L3VNI,
 	routerID string,
 	underlayASN int64,
@@ -362,7 +400,8 @@ func underlaySegmentRoutingToFRR(srv6Config *v1alpha1.SRV6Config, nodeIndex int,
 	}, nil
 }
 
-func underlayISISToFRR(isisConfig *v1alpha1.ISISConfig, interfaces []string, nodeIndex int) (*frr.UnderlayISIS, error) {
+func (c APIToFRRConverter) underlayISISToFRR(isisConfig *v1alpha1.ISISConfig,
+	interfaces []string, tunnelEndpoint *frr.TunnelEndpoint) (*frr.UnderlayISIS, error) {
 	if isisConfig == nil {
 		return nil, nil
 	}
@@ -377,40 +416,46 @@ func underlayISISToFRR(isisConfig *v1alpha1.ISISConfig, interfaces []string, nod
 		return nil, fmt.Errorf("ISIS net address invalid, err: %w", err)
 	}
 
-	systemID, err := frr.IncrementSystemID(baseISISNet.SystemID, nodeIndex)
+	systemID, err := frr.IncrementSystemID(baseISISNet.SystemID, c.NodeIndex)
 	if err != nil {
 		return nil, fmt.Errorf("could not increment ISIS systemID, err: %w", err)
 	}
 	isisNet := baseISISNet
 	isisNet.SystemID = systemID
 
-	// Always add the loopback as an IPv6 only and passive interface (for advertisePassiveOnly).
+	tunnelInterface := frr.ISISInterface{
+		Name:      hostnetwork.TunnelLoopback,
+		IPv6:      true,
+		IsPassive: true,
+	}
+	if tunnelEndpoint != nil {
+		tunnelInterface.IPv4 = tunnelEndpoint.IPv4CIDR != ""
+		tunnelInterface.IPv6 = tunnelEndpoint.IPv6CIDR != ""
+	}
 	isisInterfaces := map[string]frr.ISISInterface{
-		loopbackName: {
-			Name:      loopbackName,
-			IPv6:      true,
-			IsPassive: true,
-		},
+		hostnetwork.TunnelLoopback: tunnelInterface,
 	}
 
 	// Add underlay.Spec.Interfaces as IPv6 only, non-passive interfaces.
 	for _, iface := range interfaces {
-		isisInterfaces[iface] = frr.ISISInterface{
-			Name: iface,
+		name := c.InterfaceNames.InterfaceNameForFRR(iface)
+		isisInterfaces[name] = frr.ISISInterface{
+			Name: name,
 			IPv6: true,
 		}
 	}
 
-	// The ISISInterface slice may override default settings from loopback and
-	// from interfaces. CEL enforces uniqueness by name.
+	// The ISISInterface slice may override underlay interface defaults.
+	// CEL enforces uniqueness by name.
 	for _, intf := range isisConfig.Interfaces {
 		hasIPv4 := intf.IPFamily != nil &&
 			(*intf.IPFamily == v1alpha1.IPFamilyIPv4 || *intf.IPFamily == v1alpha1.IPFamilyDualStack)
 		hasIPv6 := intf.IPFamily != nil &&
 			(*intf.IPFamily == v1alpha1.IPFamilyIPv6 || *intf.IPFamily == v1alpha1.IPFamilyDualStack)
 
-		isisInterfaces[intf.Name] = frr.ISISInterface{
-			Name:      intf.Name,
+		name := c.InterfaceNames.InterfaceNameForFRR(intf.Name)
+		isisInterfaces[name] = frr.ISISInterface{
+			Name:      name,
 			IPv4:      hasIPv4,
 			IPv6:      hasIPv6,
 			IsPassive: slices.Contains(intf.Features, passiveInterface),
@@ -421,7 +466,8 @@ func underlayISISToFRR(isisConfig *v1alpha1.ISISConfig, interfaces []string, nod
 		Name:                 isisProcessName,
 		Net:                  isisNet,
 		Level:                isisLevel,
-		AdvertisePassiveOnly: slices.Contains(isisConfig.Features, advertisePassiveOnly),
+		AdvertisePassiveOnly: slices.Contains(isisConfig.Features, v1alpha1.AdvertisePassiveOnly),
+		MultiTopology:        slices.Contains(isisConfig.Features, v1alpha1.MultiTopology),
 		Interfaces:           mapOfInterfacesToSortedList(isisInterfaces),
 	}, nil
 }
@@ -515,15 +561,20 @@ func passthroughToFRR(l3Passthroughs []v1alpha1.L3Passthrough, nodeIndex int) (*
 func l3vniToFRR(vni v1alpha1.L3VNI, routerID string, underlayASN int64, nodeIndex int, opts ...L3VNIOption) ([]frr.L3VNIConfig, error) {
 	exportRTs := convertRTsToSliceOfStrings(vni.Spec.ExportRTs)
 	importRTs := convertRTsToSliceOfStrings(vni.Spec.ImportRTs)
+	rd := ""
+	if vni.Spec.RDAssignedNumber != nil {
+		rd = routeDistinguisher(routerID, *vni.Spec.RDAssignedNumber)
+	}
 
 	if vni.Spec.HostSession == nil { // no neighbor, just the vni / vrf
 		cfg := frr.L3VNIConfig{
-			VNI:       vni.Spec.VNI,
-			VRF:       vni.Spec.VRF,
-			ASN:       underlayASN, // Since there is no session, the ASN is arbitrary
-			RouterID:  routerID,
-			ExportRTs: exportRTs,
-			ImportRTs: importRTs,
+			RouteDistinguisher: rd,
+			VNI:                vni.Spec.VNI,
+			VRF:                vni.Spec.VRF,
+			ASN:                underlayASN, // Since there is no session, the ASN is arbitrary
+			RouterID:           routerID,
+			ExportRTs:          exportRTs,
+			ImportRTs:          importRTs,
 		}
 		for _, opt := range opts {
 			if err := opt(&cfg); err != nil {
@@ -557,10 +608,11 @@ func l3vniToFRR(vni v1alpha1.L3VNI, routerID string, underlayASN int64, nodeInde
 		}
 
 		configs = append(configs, frr.L3VNIConfig{
-			ASN:      vni.Spec.HostSession.ASN,
-			VNI:      vni.Spec.VNI,
-			VRF:      vni.Spec.VRF,
-			RouterID: routerID,
+			RouteDistinguisher: rd,
+			ASN:                vni.Spec.HostSession.ASN,
+			VNI:                vni.Spec.VNI,
+			VRF:                vni.Spec.VRF,
+			RouterID:           routerID,
 			LocalNeighbor: &frr.NeighborConfig{
 				Addr: ipnet.IP.String(),
 				ID:   ipnet.IP.String(),
@@ -636,6 +688,7 @@ func l3vpnToFRR(
 			ExportRTs:          exportRTs,
 			ImportRTs:          importRTs,
 			RouteDistinguisher: routeDistinguisher(routerID, vpn.Spec.RDAssignedNumber),
+			UDT4UDT6:           slices.Contains(vpn.Spec.Features, v1alpha1.UDT4UDT6),
 		}
 		for _, opt := range opts {
 			if err := opt(&cfg); err != nil {
@@ -682,6 +735,7 @@ func l3vpnToFRR(
 			},
 			ToAdvertiseIPv4: toAdvertiseIPv4,
 			ToAdvertiseIPv6: toAdvertiseIPv6,
+			UDT4UDT6:        slices.Contains(vpn.Spec.Features, v1alpha1.UDT4UDT6),
 		})
 	}
 	for i := range configs {
@@ -719,7 +773,7 @@ func hostSessionToHostSideIPs(hostSession *v1alpha1.HostSession, nodeIndex int) 
 
 // convertRTsToSliceOfStrings converts the provided routeTarget []v1alpha1.RouteTarget to slice of strings.
 // convertRTsToSliceOfStrings does not validate the provided routeTargets:
-// - for APItoFRR,  FilterValidL3VNIs -> validateL3VNI already did the validation
+// - for APIToFRRConverter.Convert, FilterValidL3VNIs -> validateL3VNI already did the validation
 // - in validate_vni.go, validation is done separately.
 func convertRTsToSliceOfStrings(routeTargets []v1alpha1.RouteTarget) []string {
 	strTargets := make([]string, len(routeTargets))
@@ -733,7 +787,7 @@ func defaultRTTargetsFor(asn int64, rdAssignedNumber int32) []string {
 	return []string{fmt.Sprintf("%d:%d", asn, rdAssignedNumber)}
 }
 
-func neighborToFRR(n v1alpha1.Neighbor,
+func (c APIToFRRConverter) neighborToFRR(n v1alpha1.Neighbor,
 	l2vnis []v1alpha1.L2VNI,
 	l3vnis []v1alpha1.L3VNI,
 	l3vpns []v1alpha1.L3VPN,
@@ -766,11 +820,18 @@ func neighborToFRR(n v1alpha1.Neighbor,
 
 	ebgpMultiHop, ebgpMultiHopTTL := ebgpMultiHopForNeighbor(n)
 
+	// Neighbors peering over an interface must reference the name FRR knows
+	// the interface by.
+	var neighInterface string
+	if iface := ptr.Deref(n.Interface, ""); iface != "" {
+		neighInterface = c.InterfaceNames.InterfaceNameForFRR(iface)
+	}
+
 	res := &frr.NeighborConfig{
 		Name:                  neighName,
 		ASN:                   asn,
 		Addr:                  ptr.Deref(n.Address, ""),
-		Interface:             ptr.Deref(n.Interface, ""),
+		Interface:             neighInterface,
 		ListenRange:           ptr.Deref(n.ListenRange, ""),
 		Port:                  n.Port,
 		EBGPMultiHop:          ebgpMultiHop,

@@ -41,6 +41,12 @@
             ],
             "default": "info"
           },
+          "maxReconcileBackoffSeconds": {
+            "type": ["integer", "null"],
+            "description": "Maximum retry delay in seconds after failed API reconciliation.",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
           "bgpListenLimit": {
             "type": "integer",
             "description": "Maximum number of dynamic BGP sessions accepted via underlay listen ranges (FRR `bgp listen limit`).",
@@ -161,7 +167,7 @@
           },
           "priorityClassName": {
             "type": "string",
-            "description": "Priority class name for the controller pods.",
+            "description": "Priority class for all openperouter pods (router, controller, nodemarker, hostbridge).",
             "default": ""
           },
           "affinity": {
@@ -348,7 +354,7 @@
             "default": {
               "image": {
                 "repository": "quay.io/frrouting/frr",
-                "tag": "10.6.0"
+                "tag": "10.7.1"
               },
               "resources": {},
               "reloader": {}
@@ -367,6 +373,26 @@
             "type": "object",
             "description": "Configuration for the grout DPDK dataplane sidecar. Only used when datapath is set to \"grout\".",
             "properties": {
+              "tapUnderlay": {
+                "type": "boolean",
+                "description": "Use TAP ports for grout underlay interfaces instead of PCI ports.",
+                "default": false
+              },
+              "testMode": {
+                "type": "boolean",
+                "description": "Run grout in test mode. Test mode requires no hugepages and uses dummy FIB algorithms. Leave it disabled for a hugepage-backed dataplane, requesting hugepages under grout.resources.",
+                "default": false
+              },
+              "maxMTU": {
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "minimum": 1,
+                "pattern": "^(|[1-9][0-9]*)$",
+                "description": "Maximum MTU grout accepts on its ports (GROUT_MAX_MTU). It must be at least as large as the underlay interfaces MTU. Leave it empty to use the grout default.",
+                "default": ""
+              },
               "image": {
                 "type": "object",
                 "description": "Configuration for the grout container image.",
@@ -416,19 +442,11 @@
               }
             },
             "default": {
+              "testMode": false,
               "image": {
                 "repository": "quay.io/openperouter/router"
               }
             }
-          },
-          "cri": {
-            "type": "string",
-            "description": "cri to bind its socket, can be containerd or crio.",
-            "enum": [
-              "containerd",
-              "crio"
-            ],
-            "default": "containerd"
           }
         },
         "default": {
@@ -482,8 +500,7 @@
             },
             "logLevel": "info",
             "initScript": ""
-          },
-          "cri": "containerd"
+          }
         }
       },
       "crds": {

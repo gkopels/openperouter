@@ -16,6 +16,7 @@ import (
 	"github.com/openperouter/openperouter/internal/hostnetwork"
 	"github.com/openperouter/openperouter/internal/hostnetwork/bridgerefresh"
 	"github.com/openperouter/openperouter/internal/sysctl"
+	"github.com/vishvananda/netns"
 )
 
 type interfacesConfiguration struct {
@@ -30,13 +31,22 @@ type KernelDatapathConfigurator struct {
 	conversion.KernelDatapathConfigValidator
 }
 
+// InterfaceNameForFRR returns the name unchanged: in the kernel datapath FRR
+// peers over the underlay network devices themselves.
+func (k *KernelDatapathConfigurator) InterfaceNameForFRR(name string) string {
+	return name
+}
+
 func (k *KernelDatapathConfigurator) Configure(ctx context.Context, config interfacesConfiguration) error { // nolint:gocognit
+	ovsClient := &hostnetwork.OVSClient{}
+	defer ovsClient.Close()
+
 	currentUnderlayIfaces, err := hostnetwork.UnderlayInterfaces(config.targetNamespace)
 	if err != nil {
 		return fmt.Errorf("failed to check if target namespace %s has underlay: %w", config.targetNamespace, err)
 	}
 	if len(currentUnderlayIfaces) > 0 && len(config.Underlays) == 0 {
-		restoreUnderlay(ctx, config.targetNamespace, currentUnderlayIfaces)
+		restoreUnderlay(ctx, ovsClient, config.targetNamespace, currentUnderlayIfaces)
 		return nil
 	}
 
@@ -58,6 +68,7 @@ func (k *KernelDatapathConfigurator) Configure(ctx context.Context, config inter
 		return fmt.Errorf("failed to convert config to host configuration: %w", err)
 	}
 
+	// This must run before underlay interfaces are added to the namespace.
 	if err := ensureSysctlsForConfig(ctx, config); err != nil {
 		return err
 	}
@@ -70,7 +81,7 @@ func (k *KernelDatapathConfigurator) Configure(ctx context.Context, config inter
 		// VXLAN tunnels are bound to the current underlay interfaces. If all underlay interfaces are being
 		// replaced, tear down the VNIs first so they don't reference stale interfaces; they'll be recreated
 		// on top of the new underlay.
-		if err := hostnetwork.RemoveAllVNIs(config.targetNamespace); err != nil {
+		if err := hostnetwork.RemoveAllVNIs(ovsClient, config.targetNamespace); err != nil {
 			slog.Warn("failed to remove vnis during underlay change", "err", err)
 		}
 		bridgerefresh.StopAllVNIs()
@@ -116,36 +127,11 @@ func (k *KernelDatapathConfigurator) Configure(ctx context.Context, config inter
 		configuredL3VPNs = append(configuredL3VPNs, l3vpn)
 	}
 
-	var configuredL2VNIs []hostnetwork.L2VNIParams
-	for _, vni := range hostConfig.L2VNIs {
-		if failedL3Domains.Has(vni.VRF) {
-			resourceErrors = append(resourceErrors, &openpeerrors.ResourceError{
-				Obj: v1alpha1.FailedResource{
-					Kind: openpeerrors.KindL2VNI, Name: vni.Name, Reason: reason,
-					Message: fmt.Sprintf("L3 domain %q failed netlink provisioning", vni.VRF),
-				},
-			})
-			continue
-		}
-		slog.InfoContext(ctx, "setting up L2VNI", "vni", vni.VNI)
-		if err := hostnetwork.SetupL2VNI(ctx, vni); err != nil {
-			resourceErrors = append(resourceErrors, &openpeerrors.ResourceError{
-				Obj: v1alpha1.FailedResource{
-					Kind: openpeerrors.KindL2VNI, Name: vni.Name, Reason: reason, Message: err.Error(),
-				},
-			})
-			continue
-		}
-		if err := bridgerefresh.StartForVNI(ctx, vni); err != nil {
-			resourceErrors = append(resourceErrors, &openpeerrors.ResourceError{
-				Obj: v1alpha1.FailedResource{
-					Kind: openpeerrors.KindL2VNI, Name: vni.Name, Reason: reason, Message: err.Error(),
-				},
-			})
-			continue
-		}
-		configuredL2VNIs = append(configuredL2VNIs, vni)
-	}
+	l2VNIs, l3DomainErrors := filterL2VNIsWithNoRoutingDomain(hostConfig.L2VNIs, failedL3Domains)
+	resourceErrors = append(resourceErrors, l3DomainErrors...)
+
+	configuredL2VNIs, l2VNIErrors := setupL2VNIs(ctx, ovsClient, l2VNIs, config.targetNamespace)
+	resourceErrors = append(resourceErrors, l2VNIErrors...)
 
 	slog.InfoContext(ctx, "setting up passthrough")
 	if hostConfig.L3Passthrough != nil {
@@ -173,7 +159,7 @@ func (k *KernelDatapathConfigurator) Configure(ctx context.Context, config inter
 	}
 
 	slog.InfoContext(ctx, "removing deleted vnis")
-	if err := hostnetwork.RemoveNonConfiguredVNIs(config.targetNamespace, configuredVNIs); err != nil {
+	if err := hostnetwork.RemoveNonConfiguredVNIs(ovsClient, config.targetNamespace, configuredVNIs); err != nil {
 		return fmt.Errorf("failed to remove deleted vnis: %w", err)
 	}
 	bridgerefresh.StopForRemovedVNIs(configuredL2VNIs)
@@ -198,14 +184,150 @@ func (k *KernelDatapathConfigurator) Configure(ctx context.Context, config inter
 	return errors.Join(resourceErrors...)
 }
 
+// filterL2VNIsWithNoRoutingDomain returns the L2VNIs whose L3 domain was set up,
+// and an error for each of the others.
+func filterL2VNIsWithNoRoutingDomain(
+	l2VNIs []hostnetwork.L2VNIParams,
+	failedL3Domains sets.Set[string],
+) ([]hostnetwork.L2VNIParams, []error) {
+	var healthy []hostnetwork.L2VNIParams
+	var errs []error
+	for _, vni := range l2VNIs {
+		if failedL3Domains.Has(vni.VRF) {
+			errs = append(errs, l2VNIError(vni, fmt.Sprintf("L3 domain %q failed netlink provisioning", vni.VRF)))
+			continue
+		}
+		healthy = append(healthy, vni)
+	}
+	return healthy, errs
+}
+
+// l2VNIProvisioner sets up one L2VNI in the router namespace.
+type l2VNIProvisioner interface {
+	Setup(ctx context.Context, params hostnetwork.L2VNIParams) error
+}
+
+// setupL2VNIs runs an L2VNI pass: it opens the router namespace, builds the
+// configurator that resolves the state shared by all the L2VNIs of the pass,
+// and sets each L2VNI up through it. It owns the namespace handle for the
+// duration of the pass.
+//
+// Opening the namespace and resolving the shared state read the host at the
+// time of the call, so their failures are transient: the pass keeps its
+// L2VNIs, leaving their devices in place for the next reconcile to retry.
+func setupL2VNIs(
+	ctx context.Context,
+	ovsClient *hostnetwork.OVSClient,
+	l2VNIs []hostnetwork.L2VNIParams,
+	targetNamespace string,
+) ([]hostnetwork.L2VNIParams, []error) {
+	if len(l2VNIs) == 0 {
+		return nil, nil
+	}
+
+	ns, err := netns.GetFromPath(targetNamespace)
+	if err != nil {
+		return keepL2VNIsOnTransientFailure(l2VNIs,
+			fmt.Errorf("%w: failed to get network namespace %s: %w",
+				openpeerrors.ErrTransient, targetNamespace, err))
+	}
+	defer func() {
+		if err := ns.Close(); err != nil {
+			slog.Error("failed to close L2VNI namespace", "namespace", targetNamespace, "error", err)
+		}
+	}()
+
+	configurator, err := hostnetwork.NewL2VNIConfigurator(ns, ovsClient)
+	if err != nil {
+		return keepL2VNIsOnTransientFailure(l2VNIs, fmt.Errorf("%w: %w", openpeerrors.ErrTransient, err))
+	}
+	return setupEachL2VNI(ctx, configurator, l2VNIs)
+}
+
+// setupEachL2VNI sets up every L2VNI through the provisioner holding their
+// shared state, and returns the ones whose devices must stay on the node, plus
+// an error for each L2VNI that failed.
+//
+// An L2VNI that fails with openpeerrors.ErrTransient is kept even though its
+// setup did not complete: what it already has on the node, possibly from an
+// earlier pass, is left in place and the next reconcile retries it. Any other
+// failure leaves the L2VNI out, so the cleanup that follows removes its
+// devices. A check that does not depend on the state of the host, and so would
+// fail the same way on every retry, belongs in validation before Configure and
+// must not return ErrTransient.
+func setupEachL2VNI(
+	ctx context.Context,
+	provisioner l2VNIProvisioner,
+	l2VNIs []hostnetwork.L2VNIParams,
+) ([]hostnetwork.L2VNIParams, []error) {
+	var kept []hostnetwork.L2VNIParams
+	var errs []error
+	for _, vni := range l2VNIs {
+		err := setupL2VNI(ctx, provisioner, vni)
+		if err != nil {
+			errs = append(errs, l2VNIError(vni, err.Error()))
+			if errors.Is(err, openpeerrors.ErrTransient) {
+				kept = append(kept, vni)
+			}
+			continue
+		}
+		kept = append(kept, vni)
+	}
+	return kept, errs
+}
+
+func setupL2VNI(
+	ctx context.Context,
+	provisioner l2VNIProvisioner,
+	vni hostnetwork.L2VNIParams,
+) error {
+	slog.InfoContext(ctx, "setting up L2VNI", "vni", vni.VNI)
+	if err := provisioner.Setup(ctx, vni); err != nil {
+		return err
+	}
+	return bridgerefresh.StartForVNI(ctx, vni)
+}
+
+// keepL2VNIsOnTransientFailure reports a pass-wide setup failure against every
+// L2VNI and returns the ones whose devices must stay on the node. A transient
+// host failure keeps them all: what they already have on the node, possibly
+// from an earlier pass, is left in place and the next reconcile retries them.
+// Any other failure leaves them out, so the cleanup that follows removes their
+// devices.
+func keepL2VNIsOnTransientFailure(
+	l2VNIs []hostnetwork.L2VNIParams,
+	err error,
+) ([]hostnetwork.L2VNIParams, []error) {
+	errs := make([]error, 0, len(l2VNIs))
+	for _, vni := range l2VNIs {
+		errs = append(errs, l2VNIError(vni, err.Error()))
+	}
+	if errors.Is(err, openpeerrors.ErrTransient) {
+		return l2VNIs, errs
+	}
+	return nil, errs
+}
+
+func l2VNIError(vni hostnetwork.L2VNIParams, message string) error {
+	return &openpeerrors.ResourceError{
+		Obj: v1alpha1.FailedResource{
+			Kind:    openpeerrors.KindL2VNI,
+			Name:    vni.Name,
+			Reason:  v1alpha1.FailedResourceReasonOverlayAttachmentFailed,
+			Message: message,
+		},
+	}
+}
+
 func restoreUnderlay(
 	ctx context.Context,
+	ovsClient *hostnetwork.OVSClient,
 	targetNamespace string,
 	currentUnderlayIfaces []hostnetwork.UnderlayInterface,
 ) {
 	slog.InfoContext(ctx, "underlay removed, cleaning up VNIs and underlay interfaces")
 
-	if err := hostnetwork.RemoveAllVNIs(targetNamespace); err != nil {
+	if err := hostnetwork.RemoveAllVNIs(ovsClient, targetNamespace); err != nil {
 		slog.Warn("failed to remove vnis after underlay removal", "err", err)
 	}
 
@@ -233,6 +355,8 @@ func ensureSysctlsForConfig(ctx context.Context, config interfacesConfiguration)
 		sysctl.ArpAcceptDefault(),
 		sysctl.AcceptUntrackedNADefault(),
 		sysctl.AcceptUntrackedNAAll(),
+		sysctl.DisableRPFilter("default"),
+		sysctl.DisableRPFilter("all"),
 	}
 	if isSRV6(config.Underlays[0]) {
 		sysctls = append(sysctls,

@@ -8,7 +8,9 @@ debug zebra rib
 debug zebra nexthop
 debug zebra dplane dpdk
 debug bgp neighbor-events
-debug bgp updates
+{{/* Workaround needed until https://github.com/frrouting/frr/pull/23087 lands in our FRR image */}}
+{{/* Once this is fixed in our FRR image, set this back to: debug bgp updates */}}
+debug bgp updates in
 debug bgp keepalives
 debug bgp nht
 debug bgp zebra
@@ -22,7 +24,7 @@ hostname {{.Hostname}}
 ip nht resolve-via-default
 ipv6 nht resolve-via-default
 
-{{- range .VNIs }}
+{{- range .L3VNIs }}
 vrf {{ .VRF }}
   vni {{ .VNI }}
 exit-vrf
@@ -43,6 +45,7 @@ router bgp {{ .Underlay.MyASN }}
   no bgp ebgp-requires-policy
   no bgp network import-check
   no bgp default ipv4-unicast
+  bgp bestpath as-path multipath-relax
   bgp router-id {{ .Underlay.RouterID }}
 {{- if .Underlay.GracefulRestart }}
   bgp graceful-restart
@@ -93,7 +96,7 @@ exit
 !
 {{- end }}
 
-{{- range $n := .VNIs }}
+{{- range $n := .L3VNIs }}
 {{- template "vni" dict
     "vni" $n
     "routerASN" $.Underlay.MyASN -}}

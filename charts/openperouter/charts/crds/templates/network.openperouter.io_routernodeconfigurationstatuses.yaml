@@ -123,8 +123,10 @@ spec:
                       - Underlay
                       - L2VNI
                       - L3VNI
+                      - L3VPN
                       - FrrConfiguration
                       - L3Passthrough
+                      - RawFRRConfig
                       type: string
                     message:
                       description: message human-readable failure description.

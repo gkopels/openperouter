@@ -50,25 +50,27 @@ func TestRenderedConfigPasswordRedacted(t *testing.T) {
 		t.Fatalf("failed to render config: %v", err)
 	}
 
-	want := "log stdout informational\n" +
-		"log timestamp precision 3\n" +
-		"hostname testhost\n" +
-		"ip nht resolve-via-default\n" +
-		"ipv6 nht resolve-via-default\n" +
-		"\n" +
-		"route-map allowall permit 1\n" +
-		"router bgp 64512\n" +
-		"  no bgp ebgp-requires-policy\n" +
-		"  no bgp network import-check\n" +
-		"  no bgp default ipv4-unicast\n" +
-		"  bgp router-id 10.0.0.1\n" +
-		"  neighbor 192.168.1.2 remote-as 64513\n" +
-		"  \n" +
-		"  \n" +
-		"  neighbor 192.168.1.2 password <REDACTED>\n" +
-		"\n" +
-		"exit\n" +
-		"!\n"
+	want := `log stdout informational
+log timestamp precision 3
+hostname testhost
+ip nht resolve-via-default
+ipv6 nht resolve-via-default
+
+route-map allowall permit 1
+router bgp 64512
+  no bgp ebgp-requires-policy
+  no bgp network import-check
+  no bgp default ipv4-unicast
+  bgp bestpath as-path multipath-relax
+  bgp router-id 10.0.0.1
+  neighbor 192.168.1.2 remote-as 64513
+  
+  
+  neighbor 192.168.1.2 password <REDACTED>
+
+exit
+!
+`
 
 	got := RedactPasswords(configString)
 	if got != want {
@@ -90,5 +92,58 @@ func TestFRRReloadOutputPasswordRedacted(t *testing.T) {
 	got := RedactPasswords(output)
 	if got != want {
 		t.Fatalf("redacted reload output mismatch:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestRedactPasswordsHandlesRawFRRPasswordFormatting(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "password value containing the keyword is fully redacted",
+			in:   `neighbor 192.168.1.2 password "a password with spaces"`,
+			want: "neighbor 192.168.1.2 password <REDACTED>",
+		},
+		{
+			name: "tab separated raw config is redacted",
+			in:   "neighbor\t192.168.1.2\tpassword\tsecret",
+			want: "neighbor\t192.168.1.2\tpassword\t<REDACTED>",
+		},
+		{
+			name: "password deletion command",
+			in:   `no neighbor 192.0.2.1 password old-secret`,
+			want: "no neighbor 192.0.2.1 password <REDACTED>",
+		},
+		{
+			name: "multiple password lines are redacted independently",
+			in:   "neighbor 192.168.1.1 password first\nneighbor 192.168.1.2 password second",
+			want: "neighbor 192.168.1.1 password <REDACTED>\n" +
+				"neighbor 192.168.1.2 password <REDACTED>",
+		},
+		{
+			name: "peer group password is redacted",
+			in:   `neighbor MYGROUP password secret`,
+			want: `neighbor MYGROUP password <REDACTED>`,
+		},
+		{
+			name: "neighbor description is preserved",
+			in:   `neighbor 192.168.1.2 description "uses password foobar"`,
+			want: `neighbor 192.168.1.2 description "uses password foobar"`,
+		},
+		{
+			name: "empty password value is redacted",
+			in:   `neighbor 192.168.1.2 password `,
+			want: `neighbor 192.168.1.2 password <REDACTED>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactPasswords(tt.in); got != tt.want {
+				t.Errorf("RedactPasswords() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

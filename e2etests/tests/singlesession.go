@@ -27,39 +27,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 )
 
-var singleSessionUnderlay = v1alpha1.Underlay{
-	ObjectMeta: metav1.ObjectMeta{
-		Name:      "underlay-single",
-		Namespace: openperouter.Namespace,
-	},
-	Spec: v1alpha1.UnderlaySpec{
-		ASN: 64514,
-		// InterfaceName is filled by singleSessionUnderlayCR; do not use this
-		// var's Interfaces without that helper.
-		Interfaces: []v1alpha1.UnderlayInterface{{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: ""}}},
-		Neighbors: []v1alpha1.Neighbor{
-			{
-				ASN:     new(int64(64512)),
-				Address: new("192.168.11.2"),
-			},
-		},
-		TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{
-			CIDRs: []string{"100.65.0.0/24"},
-		},
-	},
-}
-
-// singleSessionUnderlayCR returns a copy of singleSessionUnderlay with the
-// configured primary underlay interface name applied.
-func singleSessionUnderlayCR() v1alpha1.Underlay {
-	u := singleSessionUnderlay
-	u.Spec.Interfaces = []v1alpha1.UnderlayInterface{{
-		Type:          "NetworkDevice",
-		NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: infra.UnderlayIface1()},
-	}}
-	return u
-}
-
 var vniRedSingleSession = v1alpha1.L3VNI{
 	ObjectMeta: metav1.ObjectMeta{
 		Name:      "red",
@@ -108,13 +75,16 @@ var _ = Describe("Single Session Baseline", Ordered, func() {
 		cs = k8sclient.New()
 		nodesItems, err := cs.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		nodes = infra.NodesWithUnderlayLabel(nodesItems.Items)
-		Expect(nodes).NotTo(BeEmpty(), "no nodes with label %s=%s", infra.UnderlayE2ELabelKey, infra.UnderlayE2ELabelValue)
+		nodes, err = k8s.NodesWithLabel(nodesItems.Items, openperouter.InstrumentedNodesLabel)
+		Expect(err).NotTo(HaveOccurred())
 
 		By("Setting up underlay with single interface and single neighbor")
+		singleNeighborUnderlay := infra.Underlay(infra.Default)
+		singleNeighborUnderlay.Spec.Interfaces = singleNeighborUnderlay.Spec.Interfaces[:1]
+		singleNeighborUnderlay.Spec.Neighbors = singleNeighborUnderlay.Spec.Neighbors[:1]
 		err = Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{
-				singleSessionUnderlayCR(),
+				singleNeighborUnderlay,
 			},
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -127,12 +97,10 @@ var _ = Describe("Single Session Baseline", Ordered, func() {
 		_, err = k8s.CreateNamespace(cs, testNamespace)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Creating the test pod")
-		testPod, err = k8s.CreateAgnhostPod(cs, "test-pod", testNamespace)
+		By("Creating the test pod on an underlay-capable node")
+		testPod, err = k8s.CreateAgnhostPod(cs, "test-pod", testNamespace, k8s.OnNode(nodes[0].Name))
 		Expect(err).NotTo(HaveOccurred())
-
-		_, err = cs.CoreV1().Nodes().Get(context.Background(), testPod.Spec.NodeName, metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(testPod.Spec.NodeName).To(Equal(nodes[0].Name))
 
 		By("Creating L3VNI and advertising pod IP via FRR-K8s")
 		nodeSelector := k8s.NodeSelectorForPod(testPod)
@@ -181,7 +149,7 @@ var _ = Describe("Single Session Baseline", Ordered, func() {
 		err = Updater.CleanAll()
 		Expect(err).NotTo(HaveOccurred())
 
-		By("waiting for all router pods to be ready after removing the underlay")
+		By("waiting for underlay-node routers to be ready after removing the underlay")
 		Eventually(func() error {
 			routers, err := openperouter.Get(cs, HostMode)
 			if err != nil {
@@ -201,10 +169,7 @@ var _ = Describe("Single Session Baseline", Ordered, func() {
 		Eventually(func() error {
 			for _, node := range nodes {
 				neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
-				if err != nil {
-					// Skip nodes without a nodelink entry for this TOR (single-homed bastion).
-					continue
-				}
+				Expect(err).NotTo(HaveOccurred())
 				validate.SessionWithNeighbor(
 					exec,
 					validate.SessionParameters{

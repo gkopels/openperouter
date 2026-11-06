@@ -9,6 +9,7 @@ router bgp 65000
   no bgp ebgp-requires-policy
   no bgp network import-check
   no bgp default ipv4-unicast
+  bgp bestpath as-path multipath-relax
   bgp router-id 10.0.0.1
   neighbor 192.168.122.1 remote-as 65001
   
@@ -146,7 +147,7 @@ router isis ISIS
   exit
 exit
 !
-interface lo
+interface vtep-lo
   ipv6 router isis ISIS
   isis passive
 exit
@@ -158,11 +159,9 @@ exit
 !
 segment-routing
   srv6
-    ! Temporarily disabled until https://github.com/FRRouting/frr/pull/20716 lands in our image.
-    ! Source address will default to Loopback even without this.
-    !encapsulation
-    !  source-address 2001:db8:1234:5678::
-    !exit
+    encapsulation
+      source-address 2001:db8:1234:5678::
+    exit
     locators
       locator MAIN
         prefix fd00:0:32::/48 block-len 32 node-len 16

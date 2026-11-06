@@ -26,12 +26,19 @@ func testNSPath() string {
 }
 
 var _ = Describe("L3 VNI configuration", func() {
-	var testNS netns.NsHandle
+	var (
+		testNS    netns.NsHandle
+		ovsClient *OVSClient
+	)
 
 	BeforeEach(func() {
 		cleanTest(testNSName)
 		testNS = createTestNS(testNSName)
-		setupLoopback(testNS)
+		ovsClient = &OVSClient{}
+		DeferCleanup(func() {
+			ovsClient.Close()
+		})
+		setupTunnelLoopback(testNS)
 	})
 	AfterEach(func() {
 		cleanTest(testNSName)
@@ -169,7 +176,7 @@ var _ = Describe("L3 VNI configuration", func() {
 		toDelete := params[1]
 
 		By("removing non configured L3VNIs")
-		err := RemoveNonConfiguredVNIs(testNSPath(), []VNIParams{remaining.VNIParams})
+		err := RemoveNonConfiguredVNIs(ovsClient, testNSPath(), []VNIParams{remaining.VNIParams})
 		Expect(err).NotTo(HaveOccurred())
 		err = RemoveNonConfiguredVRFs(testNSPath(), map[string]bool{remaining.VRF: true})
 		Expect(err).NotTo(HaveOccurred())
@@ -324,18 +331,32 @@ var _ = Describe("L3 VNI configuration", func() {
 })
 
 var _ = Describe("L2 VNI configuration", func() {
-	var testNS netns.NsHandle
+	var (
+		testNS    netns.NsHandle
+		ovsClient *OVSClient
+	)
 	const bridgeName = "testbridge"
 
 	BeforeEach(func() {
 		cleanTest(testNSName)
 		testNS = createTestNS(testNSName)
-		setupLoopback(testNS)
+		ovsClient = &OVSClient{}
+		setupTunnelLoopback(testNS)
 		createLinuxBridge(bridgeName)
 	})
 	AfterEach(func() {
 		cleanTest(testNSName)
+		ovsClient.Close()
 	})
+
+	DescribeTable("rejects a configurator that was not built by NewL2VNIConfigurator",
+		func(cfg *L2VNIConfigurator) {
+			Expect(cfg.Setup(context.Background(), L2VNIParams{})).
+				To(MatchError(errL2VNIConfiguratorNotInitialized))
+		},
+		Entry("nil configurator", nil),
+		Entry("zero value", &L2VNIConfigurator{}),
+	)
 
 	It("should work with a single L2VNI", func() {
 		params := L2VNIParams{
@@ -354,7 +375,8 @@ var _ = Describe("L2 VNI configuration", func() {
 		}
 
 		createVRFInNamespace(testNS, params.VRF)
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
@@ -367,7 +389,7 @@ var _ = Describe("L2 VNI configuration", func() {
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
 
 		By("removing the VNI")
-		err = RemoveNonConfiguredVNIs(testNSPath(), []VNIParams{})
+		err = RemoveNonConfiguredVNIs(ovsClient, testNSPath(), []VNIParams{})
 		Expect(err).NotTo(HaveOccurred())
 		err = RemoveNonConfiguredVRFs(testNSPath(), map[string]bool{})
 		Expect(err).NotTo(HaveOccurred())
@@ -419,9 +441,10 @@ var _ = Describe("L2 VNI configuration", func() {
 				},
 			},
 		}
+		cfg := newConfiguratorForTest(ovsClient)
 		for _, p := range params {
 			createVRFInNamespace(testNS, p.VRF)
-			err := SetupL2VNI(context.Background(), p)
+			err := cfg.Setup(context.Background(), p)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
@@ -437,7 +460,7 @@ var _ = Describe("L2 VNI configuration", func() {
 		toDelete := params[1]
 
 		By("removing non configured L2VNIs")
-		err := RemoveNonConfiguredVNIs(testNSPath(), []VNIParams{remaining.VNIParams})
+		err := RemoveNonConfiguredVNIs(ovsClient, testNSPath(), []VNIParams{remaining.VNIParams})
 		Expect(err).NotTo(HaveOccurred())
 		err = RemoveNonConfiguredVRFs(testNSPath(), map[string]bool{remaining.VRF: true})
 		Expect(err).NotTo(HaveOccurred())
@@ -472,11 +495,12 @@ var _ = Describe("L2 VNI configuration", func() {
 			if params.VRF != "" {
 				createVRFInNamespace(testNS, params.VRF)
 			}
-			err := SetupL2VNI(context.Background(), params)
+			cfg := newConfiguratorForTest(ovsClient)
+			err := cfg.Setup(context.Background(), params)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test idempotency - calling setup twice should work
-			err = SetupL2VNI(context.Background(), params)
+			err = cfg.Setup(context.Background(), params)
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
@@ -566,15 +590,110 @@ var _ = Describe("L2 VNI configuration", func() {
 		}
 
 		createVRFInNamespace(testNS, params.VRF)
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
 		expectedMTU := underlayMTU - VXLanOverhead
 		Eventually(func(g Gomega) {
-			vethNames := vethNamesFromVNI(params.VNI)
-			validateVethMTU(g, vethNames, expectedMTU)
+			validateBothVethMTUs(g, testNS, params.VNI, expectedMTU)
+		}, 30*time.Second, 1*time.Second).Should(Succeed())
+	})
+
+	It("should use the underlay MTU resolved for the pass instead of looking it up again", func() {
+		const underlayMTU = 9000
+		setupFakeUnderlay(testNS, "testunderlayl2", underlayMTU)
+
+		cfg := newConfiguratorForTest(ovsClient)
+		Expect(cfg.underlayMTU).To(Equal(underlayMTU))
+
+		// Remove the underlay after the pass state is resolved: a fresh lookup
+		// would find no underlay and leave the veth MTU at its default.
+		removeFakeUnderlay(testNS, "testunderlayl2")
+
+		params := L2VNIParams{
+			VNIParams: VNIParams{
+				VRF:            "testred",
+				TargetNS:       testNSPath(),
+				VTEPIP:         "192.170.0.9/32",
+				VNI:            100,
+				VXLanPort:      new(int32(4789)),
+				TunnelOverhead: VXLanOverhead,
+			},
+			L2GatewayIPs: []string{"192.168.1.0/24"},
+		}
+
+		createVRFInNamespace(testNS, params.VRF)
+		Expect(cfg.Setup(context.Background(), params)).To(Succeed())
+
+		expectedMTU := underlayMTU - VXLanOverhead
+		Eventually(func(g Gomega) {
+			validateBothVethMTUs(g, testNS, params.VNI, expectedMTU)
+		}, 30*time.Second, 1*time.Second).Should(Succeed())
+	})
+
+	It("should bind the vxlan to the loopback resolved for the pass", func() {
+		const vtepDeviceName = "test-vtep"
+		var vtepDevice netlink.Link
+		Expect(netnamespace.In(testNS, func() error {
+			dummy := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: vtepDeviceName}}
+			if err := netlink.LinkAdd(dummy); err != nil {
+				return err
+			}
+			var err error
+			vtepDevice, err = netlink.LinkByName(vtepDeviceName)
+			return err
+		})).To(Succeed())
+
+		params := L2VNIParams{
+			VNIParams: VNIParams{
+				VRF:       "testred",
+				TargetNS:  testNSPath(),
+				VTEPIP:    "192.170.0.9/32",
+				VNI:       100,
+				VXLanPort: new(int32(4789)),
+			},
+			L2GatewayIPs: []string{"192.168.1.0/24"},
+		}
+
+		createVRFInNamespace(testNS, params.VRF)
+		cfg := newConfiguratorForTest(ovsClient)
+		cfg.vtepDeviceIndex = vtepDevice.Attrs().Index
+		Expect(cfg.Setup(context.Background(), params)).To(Succeed())
+
+		vxlanName := vxLanNameFromVNI(params.VNI)
+		Eventually(func(g Gomega) {
 			_ = netnamespace.In(testNS, func() error {
-				validateNSVethMTU(g, vethNames, expectedMTU)
+				link, err := netlink.LinkByName(vxlanName)
+				g.Expect(err).NotTo(HaveOccurred())
+				vxlan, ok := link.(*netlink.Vxlan)
+				g.Expect(ok).To(BeTrue())
+				g.Expect(vxlan.VtepDevIndex).To(Equal(vtepDevice.Attrs().Index))
+				return nil
+			})
+		}, 30*time.Second, 1*time.Second).Should(Succeed())
+	})
+
+	It("should set up the L2VNI in the namespace resolved for the pass", func() {
+		cfg := newConfiguratorForTest(ovsClient)
+
+		params := L2VNIParams{
+			VNIParams: VNIParams{
+				VRF:       "testred",
+				TargetNS:  "/nonexistent",
+				VTEPIP:    "192.170.0.9/32",
+				VNI:       100,
+				VXLanPort: new(int32(4789)),
+			},
+			L2GatewayIPs: []string{"192.168.1.0/24"},
+		}
+
+		createVRFInNamespace(testNS, params.VRF)
+		Expect(cfg.Setup(context.Background(), params)).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			_ = netnamespace.In(testNS, func() error {
+				validateL2VNI(g, params)
 				return nil
 			})
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
@@ -599,16 +718,12 @@ var _ = Describe("L2 VNI configuration", func() {
 		}
 
 		createVRFInNamespace(testNS, params.VRF)
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
-			vethNames := vethNamesFromVNI(params.VNI)
-			validateVethMTU(g, vethNames, defaultVethMTU)
-			_ = netnamespace.In(testNS, func() error {
-				validateNSVethMTU(g, vethNames, defaultVethMTU)
-				return nil
-			})
+			validateBothVethMTUs(g, testNS, params.VNI, defaultVethMTU)
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
 	})
 })
@@ -745,8 +860,8 @@ func validateL2VNI(g Gomega, params L2VNIParams) {
 }
 
 func validateVNI(g Gomega, params VNIParams) {
-	vtepDev, err := netlink.LinkByName(loopbackName)
-	g.Expect(err).NotTo(HaveOccurred(), "vtep device not found %q", loopbackName)
+	vtepDev, err := netlink.LinkByName(TunnelLoopback)
+	g.Expect(err).NotTo(HaveOccurred(), "vtep device not found %q", TunnelLoopback)
 
 	vxlanLink, err := netlink.LinkByName(vxLanNameFromVNI(params.VNI))
 	g.Expect(err).NotTo(HaveOccurred(), "vxlan link not found %q", vxLanNameFromVNI(params.VNI))
@@ -830,23 +945,6 @@ func checkLinkdeleted(g Gomega, name string) {
 	g.Expect(errors.As(err, &netlink.LinkNotFoundError{})).To(BeTrue(), "link not deleted", name, err)
 }
 
-func checkInterfaceHasNoNonLoopbackIPs(g Gomega, intf string) {
-	lo, err := netlink.LinkByName(intf)
-	g.Expect(err).NotTo(HaveOccurred())
-
-	addresses, err := netlink.AddrList(lo, netlink.FAMILY_ALL)
-	g.Expect(err).NotTo(HaveOccurred())
-
-	numAddresses := 0
-	for _, address := range addresses {
-		if address.IP.IsLoopback() {
-			continue
-		}
-		numAddresses++
-	}
-	g.Expect(numAddresses).To(Equal(0))
-}
-
 func checkLinkExists(g Gomega, name string) {
 	_, err := netlink.LinkByName(name)
 	g.Expect(err).NotTo(HaveOccurred(), "link not found %q", name)
@@ -870,14 +968,14 @@ func checkAddrGenModeNone(l netlink.Link) (bool, error) {
 	return strings.Trim(string(addrGenMode), "\n") == "1", nil
 }
 
-func setupLoopback(ns netns.NsHandle) {
+func setupTunnelLoopback(ns netns.NsHandle) {
 	handle, err := netlink.NewHandleAt(ns)
 	Expect(err).NotTo(HaveOccurred())
 	defer handle.Close()
 
-	lo, err := handle.LinkByName(loopbackName)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(handle.LinkSetUp(lo)).To(Succeed())
+	tunnelEndpoint := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: TunnelLoopback}}
+	Expect(handle.LinkAdd(tunnelEndpoint)).To(Succeed())
+	Expect(handle.LinkSetUp(tunnelEndpoint)).To(Succeed())
 }
 
 func createLinuxBridge(name string) {
@@ -921,13 +1019,22 @@ func validateNSVethMTU(g Gomega, vethNames VethNames, expectedMTU int) {
 		"pe veth MTU should be %d, got %d", expectedMTU, peLeg.Attrs().MTU)
 }
 
+func validateBothVethMTUs(g Gomega, ns netns.NsHandle, vni int32, expectedMTU int) {
+	vethNames := vethNamesFromVNI(vni)
+	validateVethMTU(g, vethNames, expectedMTU)
+	_ = netnamespace.In(ns, func() error {
+		validateNSVethMTU(g, vethNames, expectedMTU)
+		return nil
+	})
+}
+
 // defaultVethMTU is the MTU veth pairs receive when no explicit MTU is set.
 const defaultVethMTU = 1500
 
 // setupFakeUnderlay creates a dummy interface inside the given namespace with
 // the underlay special address and a configurable MTU, so that FindUnderlayMTU
 // can locate it. It is intended for unit tests exercising the MTU propagation
-// behavior of SetupL2VNI / SetupL3VNI.
+// behavior of L2VNIConfigurator.Setup / SetupL3VNI.
 func setupFakeUnderlay(ns netns.NsHandle, name string, mtu int) {
 	err := netnamespace.In(ns, func() error {
 		dummy := &netlink.Dummy{
@@ -949,6 +1056,26 @@ func setupFakeUnderlay(ns netns.NsHandle, name string, mtu int) {
 		return nil
 	})
 	Expect(err).NotTo(HaveOccurred(), "failed to set up fake underlay")
+}
+
+func removeFakeUnderlay(ns netns.NsHandle, name string) {
+	Expect(netnamespace.In(ns, func() error {
+		return RemoveLinkByName(name)
+	})).NotTo(HaveOccurred(), "failed to remove fake underlay")
+}
+
+// newConfiguratorForTest builds an L2VNI configurator for the test namespace,
+// borrowing the given OVS client, and closes its namespace handle when the test
+// finishes.
+func newConfiguratorForTest(ovsClient *OVSClient) *L2VNIConfigurator {
+	ns, err := netns.GetFromPath(testNSPath())
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() {
+		Expect(ns.Close()).To(Succeed())
+	})
+	cfg, err := NewL2VNIConfigurator(ns, ovsClient)
+	Expect(err).NotTo(HaveOccurred())
+	return cfg
 }
 
 func createVRFInNamespace(ns netns.NsHandle, name string) {

@@ -12,21 +12,28 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	openpeerrors "github.com/openperouter/openperouter/internal/errors"
 	"github.com/openperouter/openperouter/internal/netnamespace"
 	"github.com/openperouter/openperouter/internal/ovsmodel"
-	libovsclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"k8s.io/utils/ptr"
 )
 
 var _ = Describe("L2 VNI configuration with OVS bridges", func() {
-	var testNS netns.NsHandle
+	var (
+		testNS    netns.NsHandle
+		ovsClient *OVSClient
+	)
 
 	BeforeEach(func() {
 		cleanTest(testNSName)
 		testNS = createTestNS(testNSName)
-		setupLoopback(testNS)
+		ovsClient = &OVSClient{}
+		DeferCleanup(func() {
+			ovsClient.Close()
+		})
+		setupTunnelLoopback(testNS)
 	})
 
 	AfterEach(func() {
@@ -43,7 +50,8 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}
 
 		createVRFInNamespace(testNS, params.VRF)
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
@@ -55,7 +63,7 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
 
 		By("removing the VNI")
-		err = RemoveNonConfiguredVNIs(testNSPath(), []VNIParams{})
+		err = RemoveNonConfiguredVNIs(ovsClient, testNSPath(), []VNIParams{})
 		Expect(err).NotTo(HaveOccurred())
 		err = RemoveNonConfiguredVRFs(testNSPath(), map[string]bool{})
 		Expect(err).NotTo(HaveOccurred())
@@ -75,6 +83,23 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
 	})
 
+	It("should report an unreachable OVSDB as a transient failure", func() {
+		DeferCleanup(func(path string) { OVSSocketPath = path }, OVSSocketPath)
+		OVSSocketPath = "unix:/nonexistent/db.sock"
+
+		createVRFInNamespace(testNS, "testred")
+		params := L2VNIParams{
+			VNIParams: VNIParams{
+				VRF: "testred", TargetNS: testNSPath(),
+				VTEPIP: "192.170.0.9/32", VNI: 100, VXLanPort: new(int32(4789)),
+			},
+			HostMaster: &HostMaster{Type: OVSBridgeLinkType, AutoCreate: new(true)},
+		}
+
+		cfg := newConfiguratorForTest(ovsClient)
+		Expect(cfg.Setup(context.Background(), params)).To(MatchError(openpeerrors.ErrTransient))
+	})
+
 	It("should work with a single L2VNI using pre-existing named OVS bridge", func() {
 		const bridgeName = "test-ovs-br"
 		Expect(createExternalOVSBridge(bridgeName)).To(Succeed(), "must pre-provision an OVS bridge")
@@ -88,7 +113,8 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 			HostMaster: &HostMaster{Type: OVSBridgeLinkType, Name: new(bridgeName)},
 		}
 
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
@@ -98,7 +124,7 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
 
 		By("removing the VNI")
-		err = RemoveNonConfiguredVNIs(testNSPath(), []VNIParams{})
+		err = RemoveNonConfiguredVNIs(ovsClient, testNSPath(), []VNIParams{})
 		Expect(err).NotTo(HaveOccurred())
 		err = RemoveNonConfiguredVRFs(testNSPath(), map[string]bool{})
 		Expect(err).NotTo(HaveOccurred())
@@ -138,9 +164,10 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 
 		createVRFInNamespace(testNS, params1.VRF)
 		createVRFInNamespace(testNS, params2.VRF)
-		err := SetupL2VNI(context.Background(), params1)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params1)
 		Expect(err).NotTo(HaveOccurred())
-		err = SetupL2VNI(context.Background(), params2)
+		err = cfg.Setup(context.Background(), params2)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
@@ -149,7 +176,7 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}, 30*time.Second, 1*time.Second).Should(Succeed())
 
 		By("removing VNI 100, keeping VNI 101")
-		err = RemoveNonConfiguredVNIs(testNSPath(), []VNIParams{params2.VNIParams})
+		err = RemoveNonConfiguredVNIs(ovsClient, testNSPath(), []VNIParams{params2.VNIParams})
 		Expect(err).NotTo(HaveOccurred())
 		err = RemoveNonConfiguredVRFs(testNSPath(), map[string]bool{params2.VRF: true})
 		Expect(err).NotTo(HaveOccurred())
@@ -171,12 +198,13 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}
 
 		createVRFInNamespace(testNS, params.VRF)
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("calling SetupL2VNI a second time")
-		err = SetupL2VNI(context.Background(), params)
-		Expect(err).NotTo(HaveOccurred(), "second SetupL2VNI should be idempotent")
+		By("calling Setup a second time")
+		err = cfg.Setup(context.Background(), params)
+		Expect(err).NotTo(HaveOccurred(), "second Setup should be idempotent")
 
 		Eventually(func(g Gomega) {
 			validateL2HostLeg(g, params)
@@ -195,7 +223,8 @@ var _ = Describe("L2 VNI configuration with OVS bridges", func() {
 		}
 
 		createVRFInNamespace(testNS, params.VRF)
-		err := SetupL2VNI(context.Background(), params)
+		cfg := newConfiguratorForTest(ovsClient)
+		err := cfg.Setup(context.Background(), params)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
@@ -239,16 +268,11 @@ func checkVethAttachedToOVSBridge(g Gomega, bridgeName, vethName string) {
 // getOVSBridge retrieves an OVS bridge by name, returns error if not found
 func getOVSBridge(name string) (*ovsmodel.Bridge, error) {
 	ctx := context.Background()
-	ovs, err := NewOVSClient(ctx)
+	ovs, err := newOVSClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer ovs.Close()
-
-	_, err = ovs.Monitor(ctx, ovs.NewMonitor(libovsclient.WithTable(&ovsmodel.Bridge{})))
-	if err != nil {
-		return nil, err
-	}
 
 	bridge := &ovsmodel.Bridge{Name: name}
 	err = ovs.Get(ctx, bridge)
@@ -261,19 +285,11 @@ func getOVSBridge(name string) (*ovsmodel.Bridge, error) {
 // ovsBridgeHasPort checks if a port is attached to an OVS bridge
 func ovsBridgeHasPort(bridgeName, portName string) (bool, error) {
 	ctx := context.Background()
-	ovs, err := NewOVSClient(ctx)
+	ovs, err := newOVSClient(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer ovs.Close()
-
-	_, err = ovs.Monitor(ctx, ovs.NewMonitor(
-		libovsclient.WithTable(&ovsmodel.Bridge{}),
-		libovsclient.WithTable(&ovsmodel.Port{}),
-	))
-	if err != nil {
-		return false, err
-	}
 
 	bridge := &ovsmodel.Bridge{Name: bridgeName}
 	err = ovs.Get(ctx, bridge)

@@ -57,6 +57,7 @@ import (
 	"github.com/openperouter/openperouter/internal/dhcp"
 	"github.com/openperouter/openperouter/internal/filewatcher"
 	"github.com/openperouter/openperouter/internal/frr"
+	"github.com/openperouter/openperouter/internal/grout"
 	"github.com/openperouter/openperouter/internal/hostnetwork"
 	"github.com/openperouter/openperouter/internal/logging"
 	"github.com/openperouter/openperouter/internal/staticconfiguration"
@@ -94,10 +95,6 @@ type hostModeParameters struct {
 	routerHealthCheckPort int
 }
 
-type k8sModeParameters struct {
-	criSocket string
-}
-
 // stringSliceFlag is a flag.Value collecting comma-separated (or repeated)
 // values into a string slice, trimming whitespace and dropping empty entries.
 // Setting the flag replaces the default value, it can be passed just once
@@ -125,24 +122,32 @@ func (s *stringSliceFlag) Set(value string) error {
 }
 
 type parameters struct {
-	probeAddr       string
-	frrConfigPath   string
-	reloaderSocket  string
-	mode            string
-	ovsSocketPath   string
-	nodeName        string
-	namespace       string
-	logLevel        string
-	bgpListenLimit  uint
-	cniPluginDirs   stringSliceFlag
-	cniCacheDir     string
-	datapath        string
-	groutSocketPath string
+	probeAddr           string
+	frrConfigPath       string
+	reloaderSocket      string
+	mode                string
+	ovsSocketPath       string
+	nodeName            string
+	namespace           string
+	logLevel            string
+	bgpListenLimit      uint
+	cniPluginDirs       stringSliceFlag
+	cniCacheDir         string
+	datapath            string
+	groutSocketPath     string
+	groutTapUnderlay    bool
+	maxReconcileBackoff time.Duration
+}
+
+func (p parameters) groutUnderlayPortMode() grout.UnderlayPortMode {
+	if p.groutTapUnderlay {
+		return grout.PortModeTAP
+	}
+	return grout.PortModeAccelerated
 }
 
 func main() {
 	hostModeParams := hostModeParameters{}
-	k8sModeParams := k8sModeParameters{}
 
 	args := parameters{}
 
@@ -159,10 +164,10 @@ func main() {
 
 	flag.StringVar(&args.datapath, "datapath", "kernel", "The datapath to use (kernel or grout)")
 	flag.StringVar(&args.groutSocketPath, "grout-socket", "/var/run/grout/grout.sock", "Path to the grout control socket")
+	flag.BoolVar(&args.groutTapUnderlay, "grout-tap-underlay", false, "Use TAP ports for grout underlay interfaces")
 
 	flag.StringVar(&args.nodeName, "nodename", "", "The name of the node the controller runs on")
 	flag.StringVar(&args.namespace, "namespace", "", "The namespace the controller runs in")
-	flag.StringVar(&k8sModeParams.criSocket, "crisocket", "/containerd.sock", "the location of the cri socket")
 
 	flag.DurationVar(&hostModeParams.k8sWaitInterval, "k8s-wait-timeout", time.Minute,
 		"K8s API server waiting interval time")
@@ -186,7 +191,15 @@ func main() {
 			"comma-separated list of directories to search for CNI plugin binaries, can be specified just once, defaults to %v",
 			args.cniPluginDirs.values))
 
+	flag.DurationVar(&args.maxReconcileBackoff, "max-reconcile-backoff",
+		0, "maximum retry delay after failed API reconciliation (0 keeps the controller default)")
+
 	flag.Parse()
+
+	if args.maxReconcileBackoff < 0 {
+		fmt.Fprintln(os.Stderr, "max-reconcile-backoff must not be negative")
+		os.Exit(1)
+	}
 
 	if args.bgpListenLimit < 1 || args.bgpListenLimit > frr.DefaultListenLimit {
 		fmt.Println("bgplistenlimit must be between 1 and 65535, got", args.bgpListenLimit)
@@ -372,7 +385,7 @@ func runK8sConfigReconcilerHostMode(ctx context.Context,
 
 	var datapathConfigurator routerconfiguration.DatapathConfigurator = &routerconfiguration.KernelDatapathConfigurator{}
 	if args.datapath == datapathGrout {
-		datapathConfigurator = routerconfiguration.NewGroutConfigurator(args.groutSocketPath)
+		datapathConfigurator = routerconfiguration.NewGroutConfigurator(args.groutSocketPath, args.groutUnderlayPortMode())
 	}
 
 	dhcpSupervisor.OnRestart = triggerKubernetesReconcile(triggerChan, types.NamespacedName{
@@ -390,6 +403,7 @@ func runK8sConfigReconcilerHostMode(ctx context.Context,
 		LogLevel:             args.logLevel,
 		Logger:               logger,
 		MyNode:               args.nodeName,
+		MaxReconcileBackoff:  args.maxReconcileBackoff,
 		MyNamespace:          args.namespace,
 		FRRReloadSocket:      args.reloaderSocket,
 		FRRConfigPath:        args.frrConfigPath,
@@ -475,11 +489,12 @@ func runK8sConfigReconciler(ctx context.Context,
 		FRRReloadSocket: args.reloaderSocket,
 		Client:          mgr.GetClient(),
 		Node:            args.nodeName,
+		Namespace:       args.namespace,
 	}
 
 	var datapathConfigurator routerconfiguration.DatapathConfigurator = &routerconfiguration.KernelDatapathConfigurator{}
 	if args.datapath == datapathGrout {
-		datapathConfigurator = routerconfiguration.NewGroutConfigurator(args.groutSocketPath)
+		datapathConfigurator = routerconfiguration.NewGroutConfigurator(args.groutSocketPath, args.groutUnderlayPortMode())
 	}
 
 	triggerChan := make(chan event.GenericEvent, 1)
@@ -498,6 +513,7 @@ func runK8sConfigReconciler(ctx context.Context,
 		LogLevel:             args.logLevel,
 		Logger:               logger,
 		MyNode:               args.nodeName,
+		MaxReconcileBackoff:  args.maxReconcileBackoff,
 		FRRReloadSocket:      args.reloaderSocket,
 		FRRConfigPath:        args.frrConfigPath,
 		RouterProvider:       routerProvider,
@@ -546,7 +562,7 @@ func runStaticConfigReconciler(ctx context.Context,
 
 	var datapathConfigurator routerconfiguration.DatapathConfigurator = &routerconfiguration.KernelDatapathConfigurator{}
 	if args.datapath == datapathGrout {
-		datapathConfigurator = routerconfiguration.NewGroutConfigurator(args.groutSocketPath)
+		datapathConfigurator = routerconfiguration.NewGroutConfigurator(args.groutSocketPath, args.groutUnderlayPortMode())
 	}
 
 	staticReconciler := &routerconfiguration.StaticConfigReconciler{
@@ -636,6 +652,9 @@ func createK8sManager(
 						"metadata.name":      nodeName,
 						"metadata.namespace": namespace,
 					}.AsSelector(),
+				},
+				&periov1alpha1.RawFRRConfig{}: {
+					Field: fields.Set{"metadata.namespace": namespace}.AsSelector(),
 				},
 				&corev1.Secret{}: {
 					Field: fields.Set{"metadata.namespace": namespace}.AsSelector(),

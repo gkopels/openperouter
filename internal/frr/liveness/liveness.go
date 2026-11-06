@@ -1,41 +1,80 @@
 // SPDX-License-Identifier:Apache-2.0
 
-// inspired by https://github.com/metallb/metallb/blob/1245e7810bcad64d4b6f74cc69c68b219afdc0bd/frr-tools/metrics/liveness/liveness.go
 package liveness
 
 import (
+	"errors"
 	"fmt"
-	"maps"
-	"slices"
+	"os"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/openperouter/openperouter/internal/frr/vtysh"
 )
 
-func PingFrr(frrCli vtysh.Cli) error {
-	res, err := frrCli("show daemons")
+// ProcessAlive reports whether the process identified by pid exists.
+func ProcessAlive(pid int) error {
+	return syscall.Kill(pid, 0)
+}
+
+type CheckFn func() error
+
+// WatchFRR reports whether watchfrr is running and responding on its VTY.
+func WatchFRR(pidFilePath string, watchFRRCli vtysh.Cli, processAlive func(int) error) error {
+	_, err := watchFRROutput(pidFilePath, watchFRRCli, processAlive)
+	return err
+}
+
+// WatchFRRReady reports whether every daemon supervised by watchfrr is Up.
+func WatchFRRReady(pidFilePath string, watchFRRCli vtysh.Cli, processAlive func(int) error) error {
+	output, err := watchFRROutput(pidFilePath, watchFRRCli, processAlive)
 	if err != nil {
-		return fmt.Errorf("fail to list FRR daemons: %w", err)
+		return err
+	}
+	return checkWatchFRRDaemons(output)
+}
+
+func watchFRROutput(pidFilePath string, watchFRRCli vtysh.Cli, processAlive func(int) error) (string, error) {
+	content, err := os.ReadFile(pidFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read the watchfrr pid file %s: %w", pidFilePath, err)
 	}
 
-	expected := map[string]struct{}{
-		"bfdd":     {},
-		"bgpd":     {},
-		"staticd":  {},
-		"watchfrr": {},
-		"zebra":    {},
+	pid, err := strconv.Atoi(strings.TrimSpace(string(content)))
+	if err != nil {
+		return "", fmt.Errorf("invalid pid in the watchfrr pid file %s: %w", pidFilePath, err)
+	}
+	if err := processAlive(pid); err != nil {
+		return "", fmt.Errorf("watchfrr %d is not running: %w", pid, err)
+	}
+	monitorOutput, err := watchFRRCli("show watchfrr")
+	if err != nil {
+		return "", fmt.Errorf("watchfrr %d does not answer on its vty: %w", pid, err)
+	}
+	return monitorOutput, nil
+}
+
+func checkWatchFRRDaemons(output string) error {
+	unhealthyDaemons := []string{}
+	reportedDaemons := false
+	for line := range strings.SplitSeq(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		reportedDaemons = true
+		if fields[1] == "Up" {
+			continue
+		}
+		unhealthyDaemons = append(unhealthyDaemons, fmt.Sprintf("%s is %s", fields[0], fields[1]))
 	}
 
-	runningDaemons := strings.FieldsSeq(res)
-	for d := range runningDaemons {
-		delete(expected, d)
+	if !reportedDaemons {
+		return errors.New("watchfrr did not report any daemon states")
 	}
-	if len(expected) > 0 {
-		return fmt.Errorf(
-			"some FRR daemons are not running. got: %q missing: %q",
-			res,
-			strings.Join(slices.Collect(maps.Keys(expected)), ","),
-		)
+	if len(unhealthyDaemons) > 0 {
+		return fmt.Errorf("watchfrr reports unhealthy daemons: %s", strings.Join(unhealthyDaemons, ", "))
 	}
 	return nil
 }

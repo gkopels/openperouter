@@ -31,34 +31,37 @@ Kubernetes: `>= 1.19.0-0`
 | openperouter.controller.cniCacheDir | string | `"/var/lib/openperouter/cni/cache"` | CNI cache directory for persistent CNI state across pod restarts |
 | openperouter.controller.cniPluginDirs | list | `["/opt/openperouter/cni/bin/"]` | CNI plugin binary directories. The default matches the path baked into the controller image. Override only to use externally-provided binaries (e.g. host-mounted). |
 | openperouter.controller.healthProbePort | int | `9081` | Health probe port for liveness and readiness checks |
-| openperouter.controller.resources | object | `{}` |  |
-| openperouter.cri | string | `"containerd"` |  |
+| openperouter.controller.resources | object | `{"requests":{"cpu":"250m","memory":"256Mi"}}` | Resources of the controller container. CPU and memory requests reserve scheduler capacity so reconciliation remains responsive on busy nodes. |
 | openperouter.datapath | string | `"kernel"` | Datapath to use for L3 forwarding. "kernel" uses the standard Linux kernel datapath; "grout" adds a DPDK-accelerated sidecar that runs alongside FRR (FRR's dplane_grout module syncs routes automatically). |
 | openperouter.frr.image.pullPolicy | string | `""` |  |
 | openperouter.frr.image.repository | string | `"quay.io/openperouter/openperouter"` |  |
 | openperouter.frr.image.tag | string | `""` |  |
-| openperouter.frr.reloader.resources | object | `{}` |  |
+| openperouter.frr.reloader.resources | object | `{"requests":{"cpu":"100m","memory":"128Mi"}}` | Resources of the reloader container in router pods. CPU and memory requests keep configuration reloads responsive. |
 | openperouter.frr.reloader.vtyshTimeout | string | `""` | Timeout for vtysh commands used in health checks. Increase under heavy VNI load. Defaults to 10s. |
-| openperouter.frr.resources | object | `{}` |  |
+| openperouter.frr.resources | object | `{"requests":{"cpu":"250m","memory":"256Mi"}}` | Resources of the FRR container in router pods. CPU and memory requests keep BGP and BFD timely on busy nodes. |
 | openperouter.grout.image.pullPolicy | string | `""` |  |
 | openperouter.grout.image.repository | string | `"quay.io/openperouter/router"` |  |
 | openperouter.grout.image.tag | string | `"main-grout"` |  |
+| openperouter.grout.maxMTU | string | `""` | Maximum MTU grout accepts on its ports (GROUT_MAX_MTU). The underlay ports take the MTU of the underlay interfaces, so it must be at least as large as the underlay MTU. Larger values grow every packet buffer. Leave it empty to use the grout default (1800). |
 | openperouter.grout.resources.limits.cpu | string | `"500m"` |  |
 | openperouter.grout.resources.limits.memory | string | `"2Gi"` |  |
 | openperouter.grout.resources.requests.cpu | string | `"250m"` |  |
 | openperouter.grout.resources.requests.memory | string | `"512Mi"` |  |
+| openperouter.grout.tapUnderlay | bool | `false` | Use TAP ports for grout underlay interfaces instead of PCI ports. |
+| openperouter.grout.testMode | bool | `false` | Run grout in test mode. Test mode requires no hugepages and uses dummy FIB algorithms, which keeps memory usage low at the cost of real longest prefix match lookups. Leave it disabled for a hugepage-backed dataplane, requesting hugepages under grout.resources. |
 | openperouter.hostmode | bool | `false` | If true, enables host mode deployment: deploys hostbridge DaemonSet instead of router and controller, and configures nodemarker to run in webhook-only mode |
 | openperouter.image.pullPolicy | string | `""` |  |
 | openperouter.image.repository | string | `"quay.io/openperouter/router"` |  |
 | openperouter.image.tag | string | `""` |  |
 | openperouter.labels | object | `{}` |  |
 | openperouter.logLevel | string | `"info"` | Controller log level. Must be one of: `debug`, `info`, `warn` or `error`. |
+| openperouter.maxReconcileBackoffSeconds | int | `nil` | Maximum retry delay in seconds after failed API reconciliation. Unset uses the controller default rate limiter. |
 | openperouter.nodeSelector | object | `{}` | Node selector to constrain all openperouter pods (router, controller, nodemarker, hostbridge) to nodes with matching labels. |
-| openperouter.nodemarker.resources | object | `{}` |  |
+| openperouter.nodemarker.resources | object | `{"requests":{"cpu":"100m","memory":"128Mi"}}` | Resources of the nodemarker container. It serves validating webhooks, so CPU and memory requests keep admission calls responsive. |
 | openperouter.ovsRunDir | string | `"/var/run/openvswitch"` | OVS run directory to mount. This is the directory containing the OVS socket. |
 | openperouter.ovsSocketPath | string | `""` | OVS database socket path. Defaults to standard OVS location if not specified. |
 | openperouter.podAnnotations | object | `{}` |  |
-| openperouter.priorityClassName | string | `""` |  |
+| openperouter.priorityClassName | string | `""` | Priority class for all openperouter pods (router, controller, nodemarker, hostbridge). Use system-node-critical, or system-cluster-critical where cluster policy requires it: Kubernetes protects both critical classes from node-pressure eviction, and the descheduler excludes critical pods by default. |
 | openperouter.runtimeClassName | string | `""` |  |
 | openperouter.serviceAccounts.annotations | object | `{}` |  |
 | openperouter.serviceAccounts.controller.name | string | `""` |  |
@@ -71,4 +74,4 @@ Kubernetes: `>= 1.19.0-0`
 | webhook.enabled | bool | `true` |  |
 
 ----------------------------------------------
-Autogenerated from chart metadata using [helm-docs v1.10.0](https://github.com/norwoodj/helm-docs/releases/v1.10.0)
+Autogenerated from chart metadata using [helm-docs v1.14.2](https://github.com/norwoodj/helm-docs/releases/v1.14.2)

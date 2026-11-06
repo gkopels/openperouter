@@ -29,6 +29,13 @@ func AssignIPToInterface(link netlink.Link, address string) error {
 	if hasIP {
 		return nil
 	}
+	// Skip duplicate address detection: the addresses are either allocated per
+	// node or, like the anycast L2 gateway, shared on purpose, so DAD only keeps
+	// an IPv6 address tentative. FRR cannot use a tentative address, and a BGP
+	// session established in that window advertises the link-local address as
+	// the IPv6 next hop for its whole lifetime. The kernel ignores the flag on
+	// IPv4 addresses.
+	addr.Flags |= unix.IFA_F_NODAD
 	err = netlink.AddrAdd(link, addr)
 	if err != nil {
 		return fmt.Errorf("AssignIPToInterface: failed to add address %s to interface %s, err %v", address, link.Attrs().Name, err)
@@ -71,18 +78,23 @@ func AddressesForInterface(ifaceName string, filters ...AddressFilter) ([]netlin
 	return addrs, nil
 }
 
+// addrList is a variable so that unit tests can replace it.
+var addrList = netlink.AddrList
+
 // interfaceHasIP tells if the given link has the provided ip.
 func interfaceHasIP(link netlink.Link, address string) (bool, error) {
-	_, err := netlink.ParseAddr(address)
-	if err != nil {
-		return false, fmt.Errorf("interfaceHasIP: failed to parse address %s for interface %s: %w", address, link.Attrs().Name, err)
-	}
-	addresses, err := netlink.AddrList(link, netlink.FAMILY_ALL)
+	addresses, err := addrList(link, netlink.FAMILY_ALL)
 	if err != nil {
 		return false, fmt.Errorf("interfaceHasIP: failed to list addresses for interface %s: %w", link.Attrs().Name, err)
 	}
+	desiredIP, err := netlink.ParseAddr(address)
+	if err != nil {
+		return false, fmt.Errorf("interfaceHasIP: failed to parse address %s for interface %s: %w", address, link.Attrs().Name, err)
+	}
+	desiredIPMask, _ := desiredIP.Mask.Size()
 	for _, a := range addresses {
-		if a.IPNet.String() == address {
+		mask, _ := a.Mask.Size()
+		if a.IP.Equal(desiredIP.IP) && mask == desiredIPMask {
 			return true, nil
 		}
 	}
@@ -106,6 +118,34 @@ func interfaceHasNoIP(link netlink.Link, family int) (bool, error) {
 // setAddrGenModeNone sets addr_gen_mode to none (value "1") on the given link.
 func setAddrGenModeNone(l netlink.Link) error {
 	return netlink.LinkSetIP6AddrGenMode(l, 1)
+}
+
+// SuppressLinkLocal stops the kernel from managing an IPv6 link-local address on
+// the named interface: it sets addr_gen_mode to none so no new one is generated
+// and removes any that already exists.
+func SuppressLinkLocal(ifaceName string) error {
+	link, err := netlink.LinkByName(ifaceName)
+	if err != nil {
+		return fmt.Errorf("failed to find interface %s: %w", ifaceName, err)
+	}
+
+	if err := setAddrGenModeNone(link); err != nil {
+		return fmt.Errorf("failed to set addr_gen_mode none on %s: %w", ifaceName, err)
+	}
+
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V6)
+	if err != nil {
+		return fmt.Errorf("failed to list addresses on %s: %w", ifaceName, err)
+	}
+	for _, addr := range addrs {
+		if !addr.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		if err := netlink.AddrDel(link, &addr); err != nil {
+			return fmt.Errorf("failed to remove link-local %s from %s: %w", addr.IPNet, ifaceName, err)
+		}
+	}
+	return nil
 }
 
 // linkSetUp sets the link up only if it's not already up.

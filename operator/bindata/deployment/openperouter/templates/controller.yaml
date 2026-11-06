@@ -47,17 +47,14 @@ spec:
         {{- with .Values.openperouter.logLevel }}
         - --loglevel={{ . }}
         {{- end }}
+        {{- if .Values.openperouter.maxReconcileBackoffSeconds }}
+        - --max-reconcile-backoff={{ .Values.openperouter.maxReconcileBackoffSeconds }}s
+        {{- end }}
         {{- with .Values.openperouter.bgpListenLimit }}
         - --bgplistenlimit={{ . }}
         {{- end }}
         {{- with .Values.openperouter.controller.healthProbePort }}
         - --health-probe-bind-address=:{{ . }}
-        {{- end }}
-        {{- if eq .Values.openperouter.cri "containerd" }}
-        - --crisocket=/containerd.sock
-        {{- end }}
-        {{- if eq .Values.openperouter.cri "crio" }}
-        - --crisocket=/crio.sock
         {{- end }}
         {{- with .Values.openperouter.ovsSocketPath }}
         - --ovssocket={{ . }}
@@ -67,6 +64,9 @@ spec:
         {{- if eq .Values.openperouter.datapath "grout" }}
         - --datapath=grout
         - --grout-socket=/var/run/grout/grout.sock
+        {{- if .Values.openperouter.grout.tapUnderlay }}
+        - --grout-tap-underlay
+        {{- end }}
         {{- end }}
         command:
         - /controller
@@ -117,16 +117,6 @@ spec:
             - NET_BIND_SERVICE
           privileged: true
         volumeMounts:
-        {{- if eq .Values.openperouter.cri "containerd" }}
-        - mountPath: /containerd.sock
-          name: varrun
-          subPath: containerd.sock
-        {{- end }}
-        {{- if eq .Values.openperouter.cri "crio" }}
-        - mountPath: /crio.sock
-          name: varrun
-          subPath: crio.sock
-        {{- end }}
         - mountPath: /run/netns
           mountPropagation: Bidirectional
           name: runns
@@ -165,16 +155,6 @@ spec:
       - hostPath:
           path: /run/netns
         name: runns
-      {{- if eq .Values.openperouter.cri "containerd" }}
-      - hostPath:
-          path: /run/containerd
-        name: varrun
-      {{- end }}
-      {{- if eq .Values.openperouter.cri "crio" }}
-      - hostPath:
-          path: /var/run/crio
-        name: varrun
-      {{- end }}
       - hostPath:
           path: /etc/perouter/frr
           type: DirectoryOrCreate

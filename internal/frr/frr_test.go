@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openperouter/openperouter/internal/dockertest"
 	"github.com/openperouter/openperouter/internal/networklayerprotocol"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -48,7 +49,7 @@ func TestBasic(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -65,8 +66,11 @@ func TestBasic(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
+	}
+	if config.Hostname != "" {
+		t.Fatalf("ApplyConfig modified the caller's hostname: %q", config.Hostname)
 	}
 
 	testCheckConfigFile(t)
@@ -95,7 +99,7 @@ func TestBasicWithASNRT(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -114,10 +118,86 @@ func TestBasicWithASNRT(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
+	testCheckConfigFile(t)
+}
+
+func TestL2VNIWithRouteTargets(t *testing.T) {
+	configFile := testSetup(t)
+	updater := testUpdater(configFile)
+
+	config := Config{
+		Underlay: UnderlayConfig{
+			MyASN:    64512,
+			RouterID: "10.0.0.1",
+			TunnelEndpoint: &TunnelEndpoint{
+				IPv4CIDR: "100.64.0.1/32",
+			},
+			Neighbors: []NeighborConfig{
+				{
+					ASN:  mustNewPeerASNFromNumber(64513),
+					Addr: "192.168.1.2",
+					ID:   "192.168.1.2",
+					NetworkLayerProtocols: []networklayerprotocol.NLP{
+						{AFI: networklayerprotocol.L2VPN, SAFI: networklayerprotocol.EVPN},
+					},
+				},
+			},
+		},
+		L2VNIs: []L2VNIConfig{
+			{
+				VNI:       100,
+				ExportRTs: []string{"65000:100", "192.0.2.1:100"},
+				ImportRTs: []string{"65001:100"},
+			},
+		},
+	}
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
+		t.Fatalf("Failed to apply config: %s", err)
+	}
+
+	testCheckConfigFile(t)
+}
+
+func TestL2VNIWithRDAssignedNumber(t *testing.T) {
+	configFile := testSetup(t)
+	config := Config{
+		Underlay: UnderlayConfig{
+			MyASN: 64512, RouterID: "10.0.0.1",
+			TunnelEndpoint: &TunnelEndpoint{IPv4CIDR: "100.64.0.1/32"},
+		},
+		L2VNIs: []L2VNIConfig{
+			{VNI: 100, RouteDistinguisher: "10.0.0.1:500"},
+			{VNI: 101, RouteDistinguisher: "10.0.0.1:501", ExportRTs: []string{"65000:101"}, ImportRTs: []string{"65001:101"}},
+			{VNI: 102, ExportRTs: []string{"65000:102"}, ImportRTs: []string{"65001:102"}},
+		},
+	}
+	if err := ApplyConfig(context.Background(), config, testUpdater(configFile)); err != nil {
+		t.Fatal(err)
+	}
+	testCheckConfigFile(t)
+}
+
+func TestL3VNIWithRDAssignedNumber(t *testing.T) {
+	configFile := testSetup(t)
+	config := Config{
+		Underlay: UnderlayConfig{
+			MyASN: 64512, RouterID: "10.0.0.1",
+			TunnelEndpoint: &TunnelEndpoint{IPv4CIDR: "100.64.0.1/32"},
+		},
+		L3VNIs: []L3VNIConfig{
+			{ASN: 64512, RouterID: "10.0.0.1", VRF: "red", VNI: 200, RouteDistinguisher: "10.0.0.1:500"},
+			{ASN: 64512, RouterID: "10.0.0.1", VRF: "blue", VNI: 201, RouteDistinguisher: "10.0.0.1:501", ExportRTs: []string{"65000:201"}, ImportRTs: []string{"65001:201"}},
+			{ASN: 64512, RouterID: "10.0.0.1", VRF: "green", VNI: 202, ExportRTs: []string{"65000:202"}, ImportRTs: []string{"65001:202"}},
+		},
+	}
+	if err := ApplyConfig(context.Background(), config, testUpdater(configFile)); err != nil {
+		t.Fatal(err)
+	}
 	testCheckConfigFile(t)
 }
 
@@ -144,7 +224,7 @@ func TestBasicWithIPRT(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -163,7 +243,7 @@ func TestBasicWithIPRT(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -193,7 +273,7 @@ func TestExternal(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -210,7 +290,7 @@ func TestExternal(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -240,7 +320,7 @@ func TestInternal(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -257,7 +337,7 @@ func TestInternal(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -287,7 +367,7 @@ func TestDualStack(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -307,7 +387,7 @@ func TestDualStack(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -337,7 +417,7 @@ func TestDualStackWithRT(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -359,7 +439,7 @@ func TestDualStackWithRT(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -391,7 +471,7 @@ func TestIPv6Only(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -408,7 +488,7 @@ func TestIPv6Only(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -439,7 +519,7 @@ func TestBGPUnnumbered(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -456,7 +536,7 @@ func TestBGPUnnumbered(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -493,7 +573,7 @@ func TestBGPUnnumberedEBGPIPv6(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -524,7 +604,7 @@ func TestIPv6OnlyWithRT(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -543,7 +623,7 @@ func TestIPv6OnlyWithRT(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -555,7 +635,7 @@ func TestEmpty(t *testing.T) {
 	updater := testUpdater(configFile)
 
 	config := Config{}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -585,7 +665,7 @@ func TestNoVNIs(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -616,7 +696,7 @@ func TestBFDEnabled(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -654,7 +734,7 @@ func TestBFDProfile(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -684,7 +764,7 @@ func TestL3VNIWithoutLocalNeighborAndAdvertise(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				RouterID: "10.0.0.1",
 				VRF:      "red",
@@ -693,7 +773,7 @@ func TestL3VNIWithoutLocalNeighborAndAdvertise(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -723,7 +803,7 @@ func TestL3VNIWithLocalNeighborAndRedistributeConnected(t *testing.T) {
 				},
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -740,7 +820,7 @@ func TestL3VNIWithLocalNeighborAndRedistributeConnected(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -777,7 +857,7 @@ func TestPassthroughNoEVPN(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -814,7 +894,7 @@ func TestPassthroughExternal(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -851,7 +931,7 @@ func TestPassthroughV4(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -909,9 +989,9 @@ func TestPassthroughDual(t *testing.T) {
 				"2001:db8:21::/64",
 			},
 		},
-		VNIs: []L3VNIConfig{},
+		L3VNIs: []L3VNIConfig{},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -940,7 +1020,7 @@ func TestRawConfig(t *testing.T) {
 			{Priority: new(int32(20)), Config: "ip prefix-list raw-high seq 10 permit 10.1.0.0/16"},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -972,7 +1052,7 @@ func TestTunnelEndpointConfig(t *testing.T) {
 				IPv6CIDR: "2001:db8:192:168::1/64",
 			},
 		},
-		VNIs: []L3VNIConfig{
+		L3VNIs: []L3VNIConfig{
 			{
 				VRF:      "red",
 				ASN:      64512,
@@ -989,7 +1069,7 @@ func TestTunnelEndpointConfig(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1017,7 +1097,7 @@ func TestISIS(t *testing.T) {
 				Name:  isisProcessName,
 				Level: 1,
 				Interfaces: []ISISInterface{
-					{Name: "lo", IPv6: true, IsPassive: true},
+					{Name: "vtep-lo", IPv6: true, IsPassive: true},
 					{Name: "eth0", IPv4: true, IPv6: false},
 					{Name: "eth1", IPv4: false, IPv6: true},
 					{Name: "eth2", IPv4: true, IPv6: true},
@@ -1025,14 +1105,14 @@ func TestISIS(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
 	testCheckConfigFile(t)
 }
 
-func TestISISAdvertisePassiveOnly(t *testing.T) {
+func TestISISFeatures(t *testing.T) {
 	configFile := testSetup(t)
 	updater := testUpdater(configFile)
 
@@ -1053,8 +1133,9 @@ func TestISISAdvertisePassiveOnly(t *testing.T) {
 				Name:                 isisProcessName,
 				Level:                1,
 				AdvertisePassiveOnly: true,
+				MultiTopology:        true,
 				Interfaces: []ISISInterface{
-					{Name: "lo", IPv6: true, IsPassive: true},
+					{Name: "vtep-lo", IPv6: true, IsPassive: true},
 					{Name: "eth0", IPv4: true, IPv6: false},
 					{Name: "eth1", IPv4: false, IPv6: true},
 					{Name: "eth2", IPv4: true, IPv6: true},
@@ -1062,7 +1143,7 @@ func TestISISAdvertisePassiveOnly(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1095,7 +1176,7 @@ func TestSegmentRouting(t *testing.T) {
 				Name:  isisProcessName,
 				Level: 1,
 				Interfaces: []ISISInterface{
-					{Name: "lo", IPv6: true, IsPassive: true},
+					{Name: "vtep-lo", IPv6: true, IsPassive: true},
 					{Name: "eth0", IPv4: false, IPv6: true},
 				},
 			},
@@ -1142,10 +1223,11 @@ func TestSegmentRouting(t *testing.T) {
 				ImportRTs:          []string{"65003:102 65003:103"},
 				RouteDistinguisher: "10.0.0.1:101",
 				RouterID:           "10.0.0.1",
+				UDT4UDT6:           true,
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1164,7 +1246,7 @@ func TestSegmentRoutingWithL2VNI(t *testing.T) {
 				Net:   MustParseISISNet("49.0001.0002.0003.0004.00"),
 				Level: 1,
 				Interfaces: []ISISInterface{
-					{Name: "lo", IPv6: true, IsPassive: true},
+					{Name: "vtep-lo", IPv6: true, IsPassive: true},
 					{Name: "eth0", IPv4: true, IPv6: true},
 				},
 			},
@@ -1248,7 +1330,7 @@ func TestSegmentRoutingWithL2VNI(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.TODO(), &config, updater); err != nil {
+	if err := ApplyConfig(context.TODO(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1311,11 +1393,14 @@ func testCheckConfigFile(t *testing.T) {
 
 	testCompareFiles(t, configFile, goldenFile)
 
-	if !strings.Contains(configFile, "Invalid") {
-		err := testFileIsValid(configFile)
-		if err != nil {
-			t.Fatalf("Failed to verify the file %q", err)
-		}
+	if strings.Contains(configFile, "Invalid") {
+		return
+	}
+	if testing.Short() {
+		return
+	}
+	if err := dockertest.FRRReload(configFile, "test"); err != nil {
+		t.Fatalf("Failed to verify the file %q", err)
 	}
 }
 
@@ -1344,7 +1429,7 @@ func TestGracefulRestart(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1376,7 +1461,7 @@ func TestGracefulRestartCustomTimers(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1439,7 +1524,7 @@ func TestRouteReflector(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1477,7 +1562,7 @@ func TestRouteReflectorOnly(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1524,7 +1609,7 @@ func TestRouteReflectorL3VPN(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1561,7 +1646,7 @@ func TestListenRangeEBGP(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1592,7 +1677,7 @@ func TestListenRangeCustomLimit(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1659,7 +1744,7 @@ func TestBFDProfilePassiveMode(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 
@@ -1691,7 +1776,7 @@ func TestEBGPMultiHopWithTTL(t *testing.T) {
 			},
 		},
 	}
-	if err := ApplyConfig(context.Background(), &config, updater); err != nil {
+	if err := ApplyConfig(context.Background(), config, updater); err != nil {
 		t.Fatalf("Failed to apply config: %s", err)
 	}
 

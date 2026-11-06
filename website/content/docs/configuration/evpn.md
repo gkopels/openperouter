@@ -39,7 +39,7 @@ The `tunnelEndpoint.cidrs` field defines the IP range used for VTEP addresses. O
 - Node 3: `100.65.0.3`
 - etc.
 
-A loopback interface is created inside the router namespace with the allocated IP, and OpenPERouter advertises the VTEP IP to the fabric over the BGP underlay session.
+A dummy interface named `vtep-lo` is created inside the router namespace with the allocated IP, and OpenPERouter advertises the VTEP IP to the fabric over the BGP underlay session.
 
 #### IPv6 and Dual-Stack VTEP
 
@@ -85,6 +85,7 @@ spec:
     localCIDRs:
       - 192.169.11.0/24
   vni: 200
+  rdAssignedNumber: 121
 
 ```
 
@@ -94,6 +95,7 @@ spec:
 |-------|------|-------------|----------|
 | `vrf` | string | Name of the VRF (Virtual Routing and Forwarding) instance | Yes |
 | `vni` | integer | Virtual Network Identifier (1-16777215) | Yes |
+| `rdAssignedNumber` | integer | Assigned-number part of the EVPN route distinguisher (1-65535). Combined with each selected node's router ID. Must be unique among selected L3VNIs on each node; other resource types may reuse the number. Omit to keep FRR's automatic RD. | No |
 | `underlayAddressFamily` | string | VTEP address family for this VNI (`IPv4` or `IPv6`). Defaults to available family (IPv4 preferred in dual-stack). | No |
 | `hostSession.asn` | integer | Router ASN for BGP session with host | Yes |
 | `hostSession.hostASN` | integer | Host ASN for BGP session | Yes |
@@ -149,6 +151,15 @@ When you create or update VNI configurations, OpenPERouter automatically:
    - Host side: Each node gets a free IP in the CIDR, starting from the second (e.g., `192.169.11.15`)
 5. **Creates BGP Session**: Opens BGP session between router and host using the specified ASNs
 
+### Route distinguishers
+
+For L2VNIs and L3VNIs, set `rdAssignedNumber` to choose the number combined
+with each node's router ID. For example, `rdAssignedNumber: 42000` on a node
+with router ID `192.0.2.1` produces RD `192.0.2.1:42000`. Omitting the field
+keeps FRR's automatic RD.
+Configured RD numbers must be unique within each resource type on a node.
+L2VNIs, L3VNIs, and L3VPNs may reuse a number across types.
+
 ## L2VNI Configuration
 
 L2VNIs provide Layer 2 connectivity across nodes using EVPN tunnels. Unlike L3VNIs, L2VNIs extend Layer 2 domains rather than routing domains.
@@ -158,11 +169,14 @@ L2VNIs provide Layer 2 connectivity across nodes using EVPN tunnels. Unlike L3VN
 | Field | Type | Description | Required |
 |-------|------|-------------|----------|
 | `vni` | integer | Virtual Network Identifier for the EVPN tunnel | Yes |
+| `rdAssignedNumber` | integer | Assigned-number part of the EVPN route distinguisher (1-65535). Combined with each selected node's router ID. Must be unique among selected L2VNIs on each node; other resource types may reuse the number. Omit to keep FRR's automatic RD. | No |
 | `routingDomain` | object | Attaches this L2VNI to a routing domain provided by an L3VNI or L3VPN. When omitted, the L2VNI is a disconnected overlay (east-west L2 only, no VRF, no gateway). | No |
 | `routingDomain.type` | string | Type of routing domain provider (`L3VNI` or `L3VPN`) | Yes (when routingDomain is set) |
 | `routingDomain.l3vni.name` | string | metadata.name of the L3VNI that provides the routing domain | Yes (when type is `L3VNI`) |
 | `routingDomain.l3vpn.name` | string | metadata.name of the L3VPN that provides the routing domain | Yes (when type is `L3VPN`) |
 | `gatewayIPs` | string array | IP addresses in CIDR notation for the distributed anycast gateway. Cannot be set without routingDomain. Max 2 (one IPv4, one IPv6). | No |
+| `exportRTs` | string array | Route targets attached to Type-2 EVPN routes advertised by this L2VNI. Maximum 100 entries. | No |
+| `importRTs` | string array | Route targets accepted when importing Type-2 EVPN routes for this L2VNI. Maximum 100 entries. | No |
 | `underlayAddressFamily` | string | VTEP address family for this VNI (`IPv4` or `IPv6`). Defaults to available family (IPv4 preferred in dual-stack). | No |
 | `hostMaster.type` | string | Type of host interface management (`LinuxBridge` or `OVSBridge`) | Yes |
 | `hostMaster.linuxBridge.lifecycle` | string | How the Linux bridge is provisioned (`Managed` or `External`) | Yes |
@@ -181,6 +195,7 @@ metadata:
   namespace: openperouter-system
 spec:
   vni: 210
+  rdAssignedNumber: 120
   routingDomain:
     type: L3VNI
     l3vni:
@@ -189,7 +204,15 @@ spec:
     type: LinuxBridge
     linuxBridge:
       lifecycle: Managed
+  exportRTs:
+  - "64514:210"
+  importRTs:
+  - "64514:210"
 ```
+
+Route targets use the same `ASN:member` or `IPv4-address:member` formats as
+L3VNIs and L3VPNs. Both lists are optional. When they are omitted, the L2VNI
+retains the default route-target behavior.
 
 ## What Happens During Reconciliation
 

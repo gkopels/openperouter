@@ -160,6 +160,7 @@ spec:
             - SETGID
             - CHOWN
             - DAC_OVERRIDE
+            - KILL
           seccompProfile:
             type: Unconfined
         image: {{ .Values.openperouter.image.repository }}:{{ .Values.openperouter.image.tag | default .Chart.AppVersion }}
@@ -186,7 +187,7 @@ spec:
           - name: grout-socket
             mountPath: /var/run/grout
           {{- end }}
-        # The command is FRR's default entrypoint & waiting for the log file to appear and tailing it.
+        # The command waits for the router netns and starts FRR in it through frr-tools/frr-start.
         # If the log file isn't created in 60 seconds the tail fails and the container is restarted.
         # This workaround is needed to have the frr logs as part of kubectl logs -c frr < k8s-frr-podname >.
         command:
@@ -205,13 +206,17 @@ spec:
               fi
             done
             exec nsenter --net=/var/run/netns/perouter /sbin/tini -- /usr/lib/frr/docker-start
-        # Use the same probe as the reloader. If FRR's health is not o.k., both
-        # the frr and the reloader container must be restarted.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 9080
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 24
         livenessProbe:
           httpGet:
             path: /healthz
             port: 9080
-          initialDelaySeconds: 15
           periodSeconds: 20
           timeoutSeconds: 10
           failureThreshold: 3
@@ -253,11 +258,17 @@ spec:
         - containerPort: 9080
           name: health
           protocol: TCP
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 9080
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 24
         readinessProbe:
           httpGet:
             path: /readyz
             port: 9080
-          initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 10
           failureThreshold: 3
@@ -265,7 +276,6 @@ spec:
           httpGet:
             path: /healthz
             port: 9080
-          initialDelaySeconds: 15
           periodSeconds: 20
           timeoutSeconds: 10
           failureThreshold: 3
@@ -276,17 +286,7 @@ spec:
       {{- if eq .Values.openperouter.datapath "grout" }}
       - name: grout
         securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          capabilities:
-            drop: ["ALL"]
-            add:
-            - SYS_ADMIN
-            - NET_ADMIN
-            - NET_RAW
-            - IPC_LOCK
-          seccompProfile:
-            type: Unconfined
+          privileged: true
         image: "{{ .Values.openperouter.grout.image.repository }}:{{ .Values.openperouter.grout.image.tag }}"
         {{- if .Values.openperouter.grout.image.pullPolicy }}
         imagePullPolicy: {{ .Values.openperouter.grout.image.pullPolicy }}
@@ -294,13 +294,18 @@ spec:
         env:
           - name: GROUT_SOCK_PATH
             value: "/var/run/grout/grout.sock"
-          # TAP/test-mode sizing. Grout defaults target a full-table router and
-          # would exhaust typical pod memory when allocating per-VRF FIBs.
-          # _DUMMY_ skips the LPM tables that dominate that cost.
+          - name: GROUT_OVERRIDE_RP_FILTER
+            value: "true"
+          # Grout defaults target a full-table router and would exhaust typical
+          # pod memory when allocating per-VRF FIBs.
           - name: GROUT_MAX_IFACES
             value: "128"
+          # Must stay above 4x the per-port mbuf reservation
+          # (rxq + txq + 256 = 512 with GROUT_PORT_QUEUE_SIZE=128), otherwise
+          # grout shrinks the port mempool to 2x the reservation and the tap
+          # ports starve for RX buffers.
           - name: GROUT_MEMPOOL_CHUNK_SIZE
-            value: "2047"
+            value: "4095"
           - name: GROUT_MAX_NEXTHOPS
             value: "4096"
           - name: GROUT_MAX_ROUTES
@@ -311,10 +316,17 @@ spec:
             value: "128"
           - name: GROUT_PORT_QUEUE_SIZE
             value: "128"
+          {{- with .Values.openperouter.grout.maxMTU }}
+          - name: GROUT_MAX_MTU
+            value: {{ . | quote }}
+          {{- end }}
+          {{- if .Values.openperouter.grout.testMode }}
+          # DUMMY skips the LPM tables that dominate the per-VRF FIB cost.
           - name: GROUT_FIB4_ALGORITHM
-            value: _DUMMY_
+            value: DUMMY
           - name: GROUT_FIB6_ALGORITHM
-            value: _DUMMY_
+            value: DUMMY
+          {{- end }}
         command:
           - /bin/sh
           - -c
@@ -330,7 +342,10 @@ spec:
                 exit 1
               fi
             done
-            GROUT_ARGS="--test-mode --socket-mode 0666"
+            GROUT_ARGS="--socket-mode 0666"
+            {{- if .Values.openperouter.grout.testMode }}
+            GROUT_ARGS="${GROUT_ARGS} --test-mode"
+            {{- end }}
             {{- if eq .Values.openperouter.logLevel "debug" }}
             GROUT_ARGS="${GROUT_ARGS} --verbose"
             {{- end }}
@@ -349,6 +364,12 @@ spec:
             mountPath: /dev/net/tun
           - name: dpdk-runtime
             mountPath: /var/run/dpdk
+          - name: vfio
+            mountPath: /dev/vfio
+          {{- if not .Values.openperouter.grout.testMode }}
+          - name: hugepages
+            mountPath: /dev/hugepages
+          {{- end }}
         {{- with .Values.openperouter.grout.resources }}
         resources:
           {{- toYaml . | nindent 12 }}
@@ -416,6 +437,15 @@ spec:
             type: CharDevice
         - name: dpdk-runtime
           emptyDir: {}
+        - name: vfio
+          hostPath:
+            path: /dev/vfio
+            type: DirectoryOrCreate
+        {{- if not .Values.openperouter.grout.testMode }}
+        - name: hugepages
+          emptyDir:
+            medium: HugePages
+        {{- end }}
         {{- end }}
       initContainers:
         # Copies the initial config files with the right permissions to the shared volume.

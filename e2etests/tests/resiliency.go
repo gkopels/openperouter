@@ -4,12 +4,13 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/openperouter/openperouter/api/v1alpha1"
@@ -21,10 +22,12 @@ import (
 	"github.com/openperouter/openperouter/e2etests/pkg/k8sclient"
 	"github.com/openperouter/openperouter/e2etests/pkg/openperouter"
 	"github.com/openperouter/openperouter/e2etests/pkg/url"
+	"github.com/openperouter/openperouter/e2etests/pkg/validate"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const resiliencyNetnsPath = "/var/run/netns/perouter"
@@ -74,11 +77,11 @@ var _ = Describe("Alpha: Named netns and kernel objects survive FRR crash", Orde
 			return openperouter.AreReady(routers)
 		}, 2*time.Minute, time.Second).ShouldNot(HaveOccurred())
 
-		routers.Dump(ginkgo.GinkgoWriter)
+		routers.Dump(GinkgoWriter)
 
 		err = Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{
-				infra.Underlay,
+				infra.Underlay(infra.Default),
 			},
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -128,9 +131,10 @@ var _ = Describe("Alpha: Named netns and kernel objects survive FRR crash", Orde
 	})
 
 	It("should preserve named netns at /var/run/netns/perouter when FRR process crashes", func() {
-		routerPods, err := openperouter.RouterPodsForNodes(cs, allNodes(cs))
+		nodes := allNodes(cs)
+		routerPods, err := openperouter.RouterPodsForNodes(cs, nodes)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(routerPods).NotTo(BeEmpty())
+		Expect(routerPods).To(HaveLen(len(nodes)), "expected one router pod per selected node")
 		routerPod := routerPods[0]
 		nodeName := routerPod.Spec.NodeName
 
@@ -182,71 +186,46 @@ var _ = Describe("Alpha: Named netns and kernel objects survive FRR crash", Orde
 		By("waiting for BGP sessions to re-establish")
 		neighborIP, err := infra.NeighborIP(infra.KindLeaf, nodeName)
 		Expect(err).NotTo(HaveOccurred())
-		validateSessionWithNeighbor(
+		validate.SessionWithNeighbor(
 			executor.ForContainer(infra.KindLeaf),
-			validationParameters{
-				fromName:    infra.KindLeaf,
-				toName:      nodeName,
-				neighborIP:  neighborIP,
-				established: Established,
+			validate.SessionParameters{
+				FromName:    infra.KindLeaf,
+				ToName:      nodeName,
+				NeighborIP:  neighborIP,
+				Established: Established,
 			},
 		)
 	})
 })
 
-// allNodes returns a map of all Kubernetes node names for use with RouterPodsForNodes.
-func allNodes(cs clientset.Interface) map[string]bool {
+// allNodes returns all Kubernetes nodes.
+func allNodes(cs clientset.Interface) []v1.Node {
 	nodes, err := k8s.GetNodes(cs)
 	Expect(err).NotTo(HaveOccurred())
-	result := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		result[n.Name] = true
-	}
-	return result
+	return nodes
 }
 
-// killFRREntrypoint kills the FRR container entrypoint so kubelet restarts it.
+// killFRREntrypoint kills the tini/docker-start entrypoint process inside the given FRR container.
 // A DeferCleanup is NOT registered; callers are responsible for waiting on pod restart.
-//
-// OpenPE's frr container ends with:
-//   exec nsenter --net=... /sbin/tini -- /usr/lib/frr/docker-start
-// so PID 1 is that entrypoint once the pod is Ready. Prefer kill 1.
-// Fallback scans /proc for tini+docker-start, excluding this helper shell (its
-// cmdline contains the same pattern and used to make pgrep/kill race on ESRCH).
 func killFRREntrypoint(frrExec executor.Executor) {
 	GinkgoHelper()
-	_, err := frrExec.Exec("sh", "-c",
-		`# Ready pods: PID 1 is nsenter/tini/docker-start after the wait-loop exec.
-if kill 1 2>/dev/null; then
-  exit 0
-fi
-if ! kill -0 1 2>/dev/null; then
-  # Already gone — container is restarting.
-  exit 0
-fi
-pid=""
-for f in /proc/[0-9]*/cmdline; do
-  cmd=$(tr '\0' ' ' <"$f" 2>/dev/null) || continue
-  case "$cmd" in
-    *tini*docker-start*)
-      cand=$(basename "$(dirname "$f")")
-      # Exclude this helper shell — its argv embeds the match pattern.
-      [ "$cand" = "$$" ] && continue
-      pid=$cand
-      break
-      ;;
-  esac
-done
-[ -n "$pid" ] || { echo "FRR entrypoint PID not found (kill 1 failed)" >&2; exit 1; }
-if kill "$pid" 2>/dev/null; then
-  exit 0
-fi
-if ! kill -0 "$pid" 2>/dev/null; then
-  exit 0
-fi
-echo "failed to kill FRR entrypoint pid=$pid" >&2
-exit 1`)
-	Expect(err).NotTo(HaveOccurred(), "failed to kill FRR entrypoint: %v", err)
+	// awk: in each line, search for the line starting with 'Name:'' and save the value to 'n'.
+	// If the value of n is 'tini' and if one of the lines starts with 'Pid:', print that value.
+	searchExpr := `awk '$1=="Name:" {n=$2}; $1=="Pid:" && n=="tini" {print $2}' /proc/*/status`
+
+	var frrPID string
+	Eventually(func(g Gomega) {
+		psOut, err := frrExec.Exec("/bin/bash", "-c", searchExpr)
+		g.Expect(err).NotTo(HaveOccurred(), "failed to find FRR entrypoint PID")
+
+		pids := strings.Split(strings.TrimSpace(psOut), "\n") // Always guaranteed to hold at the very least one empty elem.
+		frrPID = strings.TrimSpace(pids[0])
+		g.Expect(frrPID).NotTo(BeEmpty(), "FRR entrypoint PID should not be empty")
+	}, 10*time.Second, time.Second).Should(Succeed())
+
+	GinkgoWriter.Printf("killing PID %s\n", frrPID)
+	output, err := frrExec.Exec("kill", frrPID)
+	Expect(err).NotTo(HaveOccurred(), "failed to kill FRR process %q: %v", frrPID, output)
 }
 
 var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func() {
@@ -295,11 +274,11 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 			return openperouter.AreReady(routers)
 		}, 2*time.Minute, time.Second).ShouldNot(HaveOccurred())
 
-		underlayWithGR := infra.Underlay.DeepCopy()
+		underlayWithGR := infra.Underlay(infra.Default)
 		underlayWithGR.Spec.GracefulRestart = &v1alpha1.GracefulRestartConfig{}
 
 		err = Updater.Update(config.Resources{
-			Underlays: []v1alpha1.Underlay{*underlayWithGR},
+			Underlays: []v1alpha1.Underlay{underlayWithGR},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -335,13 +314,13 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		for _, node := range nodes {
 			neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			validateSessionWithNeighbor(
+			validate.SessionWithNeighbor(
 				leafExec,
-				validationParameters{
-					fromName:    infra.KindLeaf,
-					toName:      node.Name,
-					neighborIP:  neighborIP,
-					established: Established,
+				validate.SessionParameters{
+					FromName:    infra.KindLeaf,
+					ToName:      node.Name,
+					NeighborIP:  neighborIP,
+					Established: Established,
 				},
 			)
 		}
@@ -429,13 +408,13 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		By("waiting for BGP sessions to establish before traffic check")
 		neighborIP, err := infra.NeighborIP(infra.KindLeaf, nodes[0].Name)
 		Expect(err).NotTo(HaveOccurred())
-		validateSessionWithNeighbor(
+		validate.SessionWithNeighbor(
 			executor.ForContainer(infra.KindLeaf),
-			validationParameters{
-				fromName:    infra.KindLeaf,
-				toName:      nodes[0].Name,
-				neighborIP:  neighborIP,
-				established: Established,
+			validate.SessionParameters{
+				FromName:    infra.KindLeaf,
+				ToName:      nodes[0].Name,
+				NeighborIP:  neighborIP,
+				Established: Established,
 			},
 		)
 
@@ -453,7 +432,9 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		}).WithTimeout(3 * time.Minute).WithPolling(time.Second).Should(Succeed())
 
 		By("identifying the router pod on clientPod's node")
-		routerPods, err := openperouter.RouterPodsForNodes(cs, map[string]bool{clientPod.Spec.NodeName: true})
+		routerPods, err := openperouter.RouterPodsForNodes(
+			cs, []v1.Node{k8s.NodeForPod(clientPod)},
+		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(routerPods).To(HaveLen(1))
 		routerPod := routerPods[0]
@@ -478,7 +459,7 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 
 		By("waiting for check_veths to recreate the underlay veth destroyed by netns deletion")
 		Eventually(func() bool {
-			return openperouter.UnderlayVethsExists(nodeName)
+			return openperouter.InterfacesExists(nodeName, infra.UnderlayInterfaceNames())
 		}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(BeTrue())
 
 		By("waiting for the controller to recreate the named netns")
@@ -495,7 +476,7 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 
 		By("waiting for a new router pod to come up and become ready")
 		Eventually(func(g Gomega) {
-			newRouterPods, err := openperouter.RouterPodsForNodes(cs, map[string]bool{nodeName: true})
+			newRouterPods, err := openperouter.RouterPodsForNodes(cs, []v1.Node{k8s.NodeForPod(routerPod)})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(newRouterPods).To(HaveLen(1))
 			newPod := newRouterPods[0]
@@ -506,13 +487,13 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		By("waiting for BGP sessions to re-establish")
 		neighborIP, err = infra.NeighborIP(infra.KindLeaf, nodeName)
 		Expect(err).NotTo(HaveOccurred())
-		validateSessionWithNeighbor(
+		validate.SessionWithNeighbor(
 			executor.ForContainer(infra.KindLeaf),
-			validationParameters{
-				fromName:    infra.KindLeaf,
-				toName:      nodeName,
-				neighborIP:  neighborIP,
-				established: Established,
+			validate.SessionParameters{
+				FromName:    infra.KindLeaf,
+				ToName:      nodeName,
+				NeighborIP:  neighborIP,
+				Established: Established,
 			},
 		)
 
@@ -523,7 +504,9 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		dumpPreTrafficState(cs, nodeName)
 
 		By("waiting for bridge FDB entries on rebuilt PE before traffic check")
-		rebuiltRouterPods, err := openperouter.RouterPodsForNodes(cs, map[string]bool{nodeName: true})
+		rebuiltRouterPods, err := openperouter.RouterPodsForNodes(
+			cs, []v1.Node{k8s.NodeForPod(routerPod)},
+		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rebuiltRouterPods).To(HaveLen(1))
 		rebuiltPEExec := executor.ForPodInNamedNetns(rebuiltRouterPods[0].Namespace, rebuiltRouterPods[0].Name, "frr", resiliencyNetnsPath)
@@ -589,21 +572,21 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		urlStr := url.Format("http://%s/clientip", hostPort)
 
 		DeferCleanup(func() {
-			if !ginkgo.CurrentSpecReport().Failed() {
+			if !CurrentSpecReport().Failed() {
 				return
 			}
 			leafExec := executor.ForContainer(infra.KindLeaf)
 			out, err := leafExec.Exec("vtysh", "-c", "show bgp l2vpn evpn route type macip")
 			if err != nil {
-				ginkgo.GinkgoWriter.Printf("failed to dump leafkind Type-2 routes: %v\n", err)
+				GinkgoWriter.Printf("failed to dump leafkind Type-2 routes: %v\n", err)
 			} else {
-				ginkgo.GinkgoWriter.Printf("=== leafkind Type-2 EVPN routes ===\n%s\n", out)
+				GinkgoWriter.Printf("=== leafkind Type-2 EVPN routes ===\n%s\n", out)
 			}
 			out, err = leafExec.Exec("vtysh", "-c", "show evpn mac vni all")
 			if err != nil {
-				ginkgo.GinkgoWriter.Printf("failed to dump leafkind EVPN MACs: %v\n", err)
+				GinkgoWriter.Printf("failed to dump leafkind EVPN MACs: %v\n", err)
 			} else {
-				ginkgo.GinkgoWriter.Printf("=== leafkind EVPN MACs ===\n%s\n", out)
+				GinkgoWriter.Printf("=== leafkind EVPN MACs ===\n%s\n", out)
 			}
 		})
 
@@ -614,13 +597,13 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		for _, node := range nodes {
 			neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			validateSessionWithNeighbor(
+			validate.SessionWithNeighbor(
 				leafExec,
-				validationParameters{
-					fromName:    infra.KindLeaf,
-					toName:      node.Name,
-					neighborIP:  neighborIP,
-					established: Established,
+				validate.SessionParameters{
+					FromName:    infra.KindLeaf,
+					ToName:      node.Name,
+					NeighborIP:  neighborIP,
+					Established: Established,
 				},
 			)
 		}
@@ -632,7 +615,9 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		}).WithTimeout(2 * time.Minute).WithPolling(time.Second).Should(Succeed())
 
 		By("identifying the router pod on the server's node")
-		routerPods, err := openperouter.RouterPodsForNodes(cs, map[string]bool{serverPod.Spec.NodeName: true})
+		routerPods, err := openperouter.RouterPodsForNodes(
+			cs, []v1.Node{k8s.NodeForPod(serverPod)},
+		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(routerPods).To(HaveLen(1))
 		routerPod := routerPods[0]
@@ -647,7 +632,7 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 
 		By("waiting for a new router pod to become ready")
 		Eventually(func(g Gomega) {
-			newRouterPods, err := openperouter.RouterPodsForNodes(cs, map[string]bool{nodeName: true})
+			newRouterPods, err := openperouter.RouterPodsForNodes(cs, []v1.Node{k8s.NodeForPod(routerPod)})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(newRouterPods).To(HaveLen(1))
 			newPod := newRouterPods[0]
@@ -658,13 +643,13 @@ var _ = Describe("Beta: Named netns auto-rebuilds after deletion", Ordered, func
 		By("waiting for BGP sessions to re-establish")
 		neighborIP, err := infra.NeighborIP(infra.KindLeaf, nodeName)
 		Expect(err).NotTo(HaveOccurred())
-		validateSessionWithNeighbor(
+		validate.SessionWithNeighbor(
 			executor.ForContainer(infra.KindLeaf),
-			validationParameters{
-				fromName:    infra.KindLeaf,
-				toName:      nodeName,
-				neighborIP:  neighborIP,
-				established: Established,
+			validate.SessionParameters{
+				FromName:    infra.KindLeaf,
+				ToName:      nodeName,
+				NeighborIP:  neighborIP,
+				Established: Established,
 			},
 		)
 
@@ -724,7 +709,7 @@ func (tr trafficTestResult) eval() error {
 		return fmt.Errorf("no traffic was measured")
 	}
 	if tr.failCount > maxAllowedFailures {
-		return fmt.Errorf(tr.String())
+		return errors.New(tr.String())
 	}
 	return nil
 }
@@ -734,7 +719,7 @@ func (tr trafficTestResult) String() string {
 }
 
 func dumpUnderlayVeths(cs clientset.Interface, label string) {
-	w := ginkgo.GinkgoWriter
+	w := GinkgoWriter
 	w.Printf("=== DIAG [%s]: underlay veth state ===\n", label)
 
 	nodes, err := k8s.GetNodes(cs)
@@ -775,9 +760,9 @@ func dumpUnderlayVeths(cs clientset.Interface, label string) {
 }
 
 func dumpPreTrafficState(cs clientset.Interface, nodeName string) {
-	w := ginkgo.GinkgoWriter
+	w := GinkgoWriter
 
-	routerPods, err := openperouter.RouterPodsForNodes(cs, map[string]bool{nodeName: true})
+	routerPods, err := openperouter.RouterPodsForNodes(cs, []v1.Node{{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}})
 	if err != nil || len(routerPods) == 0 {
 		w.Printf("DIAG: cannot get rebuilt router pod on %s: %v\n", nodeName, err)
 		return
@@ -816,6 +801,43 @@ func dumpPreTrafficState(cs clientset.Interface, nodeName string) {
 
 var _ = Describe("Configuration Resiliency", Ordered, func() {
 	var cs clientset.Interface
+	var nodes []v1.Node
+
+	goodUnderlay := v1alpha1.Underlay{
+		ObjectMeta: metav1.ObjectMeta{Name: "underlay", Namespace: openperouter.Namespace},
+		Spec: v1alpha1.UnderlaySpec{
+			ASN: 64514,
+			Interfaces: []v1alpha1.UnderlayInterface{
+				{Type: "NetworkDevice", NetworkDevice: &v1alpha1.NetworkDevice{InterfaceName: "toswitch1"}},
+			},
+			Neighbors: []v1alpha1.Neighbor{
+				{ASN: new(int64(64512)), Address: new("192.168.11.2")},
+			},
+			TunnelEndpoint: &v1alpha1.TunnelEndpointConfig{CIDRs: []string{"100.65.0.0/24", "2001:db8:1234:5678::/64"}},
+			ISIS: &v1alpha1.ISISConfig{
+				BaseNet: "49.0001.0002.0003.0004.00", Level: new(int32(1)),
+				Interfaces: []v1alpha1.ISISInterface{{Name: "toswitch1", IPFamily: new(v1alpha1.IPFamilyIPv6)}},
+			},
+			SRV6: &v1alpha1.SRV6Config{Locator: v1alpha1.SRV6Locator{BasePrefix: "fd00:0:32::/48", Format: "usid-f3216"}},
+		},
+	}
+
+	goodL3VPN := v1alpha1.L3VPN{
+		ObjectMeta: metav1.ObjectMeta{Name: "good-vpn", Namespace: openperouter.Namespace},
+		Spec:       v1alpha1.L3VPNSpec{VRF: "good-vpn", RDAssignedNumber: 300, ImportRTs: []v1alpha1.RouteTarget{"64514:300"}},
+	}
+
+	goodPassthrough := v1alpha1.L3Passthrough{
+		ObjectMeta: metav1.ObjectMeta{Name: "good-pt", Namespace: openperouter.Namespace},
+		Spec: v1alpha1.L3PassthroughSpec{HostSession: v1alpha1.HostSession{
+			ASN: 64514, HostASN: new(int64(64515)), LocalCIDRs: []string{"192.169.10.0/24"},
+		}},
+	}
+
+	goodRawFRRConfig := v1alpha1.RawFRRConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "good-raw", Namespace: openperouter.Namespace},
+		Spec:       v1alpha1.RawFRRConfigSpec{RawConfig: "ip prefix-list selector-test seq 10 permit 10.111.0.0/16"},
+	}
 
 	goodL3VNI := v1alpha1.L3VNI{
 		ObjectMeta: metav1.ObjectMeta{
@@ -860,14 +882,18 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 	}
 
 	BeforeAll(func() {
-		Expect(Updater.CleanAll()).To(Succeed())
-
+		var err error
 		cs = k8sclient.New()
+		nodes, err = k8s.GetNodes(cs)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(nodes)).To(BeNumerically(">=", 1), "Expected at least 1 node, but got fewer")
+
+		Expect(Updater.CleanAll()).To(Succeed())
 
 		Expect(openperouter.DisableWebhooksForNamespace(cs, openperouter.Namespace)).To(Succeed())
 
 		Expect(Updater.Update(config.Resources{
-			Underlays: []v1alpha1.Underlay{infra.Underlay},
+			Underlays: []v1alpha1.Underlay{infra.Underlay(infra.Default)},
 		})).To(Succeed())
 	})
 
@@ -890,9 +916,72 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 		Expect(Updater.CleanButUnderlay()).To(Succeed())
 
 		Eventually(func(g Gomega) {
-			expectNodeCondition(g, infra.KindControlPlane, "Ready", metav1.ConditionTrue)
-			expectNodeCondition(g, infra.KindControlPlane, "Degraded", metav1.ConditionFalse)
+			expectNodeCondition(g, nodes[0].Name, "Ready", metav1.ConditionTrue)
+			expectNodeCondition(g, nodes[0].Name, "Degraded", metav1.ConditionFalse)
 		}, time.Minute, time.Second).Should(Succeed())
+	})
+
+	Context("when resources have invalid node selectors", func() {
+		AfterEach(func() {
+			dumpIfFails(cs)
+			badUnderlay := &v1alpha1.Underlay{ObjectMeta: metav1.ObjectMeta{
+				Name: "bad-underlay", Namespace: openperouter.Namespace,
+			}}
+			Expect(client.IgnoreNotFound(Updater.Client().Delete(context.Background(), badUnderlay))).To(Succeed())
+			Expect(Updater.Update(config.Resources{
+				Underlays: []v1alpha1.Underlay{infra.Underlay(infra.Default)},
+			})).To(Succeed())
+		})
+		It("should track resources with invalid node selectors in status", func() {
+			goodSelector := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{Key: "kubernetes.io/hostname", Operator: metav1.LabelSelectorOpExists},
+			}}
+			badSelector := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{Key: "kubernetes.io/hostname", Operator: "InvalidOp"},
+			}}
+			Expect(Updater.Update(config.Resources{
+				Underlays: []v1alpha1.Underlay{
+					withSelector(goodUnderlay, goodUnderlay.Name, goodSelector),
+					withSelector(goodUnderlay, "bad-underlay", badSelector),
+				},
+				L3VNIs: []v1alpha1.L3VNI{
+					withSelector(goodL3VNI, goodL3VNI.Name, goodSelector),
+					withSelector(goodL3VNI, "bad-l3", badSelector),
+				},
+				L2VNIs: []v1alpha1.L2VNI{
+					withSelector(goodL2VNI, goodL2VNI.Name, goodSelector),
+					withSelector(goodL2VNI, "bad-l2", badSelector),
+				},
+				L3VPNs: []v1alpha1.L3VPN{
+					withSelector(goodL3VPN, goodL3VPN.Name, goodSelector),
+					withSelector(goodL3VPN, "bad-vpn", badSelector),
+				},
+				L3Passthrough: []v1alpha1.L3Passthrough{
+					withSelector(goodPassthrough, goodPassthrough.Name, goodSelector),
+					withSelector(goodPassthrough, "bad-pt", badSelector),
+				},
+				RawFRRConfigs: []v1alpha1.RawFRRConfig{
+					withSelector(goodRawFRRConfig, goodRawFRRConfig.Name, goodSelector),
+					withSelector(goodRawFRRConfig, "bad-raw", badSelector),
+				},
+			})).To(Succeed())
+
+			wantFailures := []v1alpha1.FailedResource{
+				invalidSelectorFailure("Underlay", "bad-underlay"),
+				invalidSelectorFailure("L3VNI", "bad-l3"),
+				invalidSelectorFailure("L2VNI", "bad-l2"),
+				invalidSelectorFailure("L3VPN", "bad-vpn"),
+				invalidSelectorFailure("L3Passthrough", "bad-pt"),
+				invalidSelectorFailure("RawFRRConfig", "bad-raw"),
+			}
+			Eventually(func(g Gomega) {
+				status, err := openperouter.GetNodeStatus(Updater.Client(), nodes[0].Name)
+				g.Expect(err).To(Succeed())
+				g.Expect(status.Status.FailedResources).To(ConsistOf(wantFailures))
+				expectNodeCondition(g, nodes[0].Name, "Ready", metav1.ConditionFalse)
+				expectNodeCondition(g, nodes[0].Name, "Degraded", metav1.ConditionTrue)
+			}, 2*time.Minute, time.Second).Should(Succeed())
+		})
 	})
 
 	Context("when L3VNI and L2VNI have the same VNI number", func() {
@@ -903,7 +992,7 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 			})).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				status, err := openperouter.GetNodeStatus(Updater.Client(), infra.KindControlPlane)
+				status, err := openperouter.GetNodeStatus(Updater.Client(), nodes[0].Name)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status.Status.FailedResources).To(HaveLen(1))
 				failed := status.Status.FailedResources[0]
@@ -912,8 +1001,8 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 				g.Expect(failed.Reason).To(Equal(v1alpha1.FailedResourceReasonValidationFailed))
 				g.Expect(failed.Message).To(ContainSubstring("duplicate vni"))
 
-				expectNodeCondition(g, infra.KindControlPlane, "Ready", metav1.ConditionFalse)
-				expectNodeCondition(g, infra.KindControlPlane, "Degraded", metav1.ConditionTrue)
+				expectNodeCondition(g, nodes[0].Name, "Ready", metav1.ConditionFalse)
+				expectNodeCondition(g, nodes[0].Name, "Degraded", metav1.ConditionTrue)
 			}, time.Minute, time.Second).Should(Succeed())
 		})
 	})
@@ -949,7 +1038,7 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 			})).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				status, err := openperouter.GetNodeStatus(Updater.Client(), infra.KindControlPlane)
+				status, err := openperouter.GetNodeStatus(Updater.Client(), nodes[0].Name)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status.Status.FailedResources).To(HaveLen(2))
 
@@ -967,7 +1056,7 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 				g.Expect(failedByName["cascade-l2"].Reason).To(Equal(v1alpha1.FailedResourceReasonDependencyFailed))
 				g.Expect(failedByName["cascade-l2"].Message).To(ContainSubstring(`referenced L3VNI "bad-rt-l3" not found`))
 
-				expectNodeCondition(g, infra.KindControlPlane, "Ready", metav1.ConditionFalse)
+				expectNodeCondition(g, nodes[0].Name, "Ready", metav1.ConditionFalse)
 			}, time.Minute, time.Second).Should(Succeed())
 		})
 	})
@@ -991,7 +1080,7 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 			})).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				status, err := openperouter.GetNodeStatus(Updater.Client(), infra.KindControlPlane)
+				status, err := openperouter.GetNodeStatus(Updater.Client(), nodes[0].Name)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status.Status.FailedResources).To(HaveLen(1))
 				failed := status.Status.FailedResources[0]
@@ -1000,7 +1089,7 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 				g.Expect(failed.Reason).To(Equal(v1alpha1.FailedResourceReasonDependencyFailed))
 				g.Expect(failed.Message).To(ContainSubstring(`referenced L3VNI "nonexistent" not found`))
 
-				expectNodeCondition(g, infra.KindControlPlane, "Ready", metav1.ConditionFalse)
+				expectNodeCondition(g, nodes[0].Name, "Ready", metav1.ConditionFalse)
 			}, time.Minute, time.Second).Should(Succeed())
 		})
 	})
@@ -1014,7 +1103,7 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 			})).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				status, err := openperouter.GetNodeStatus(Updater.Client(), infra.KindControlPlane)
+				status, err := openperouter.GetNodeStatus(Updater.Client(), nodes[0].Name)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status.Status.FailedResources).To(HaveLen(1))
 				g.Expect(status.Status.FailedResources[0].Name).To(Equal("l2-conflict"))
@@ -1030,13 +1119,49 @@ var _ = Describe("Configuration Resiliency", Ordered, func() {
 			})).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				status, err := openperouter.GetNodeStatus(Updater.Client(), infra.KindControlPlane)
+				status, err := openperouter.GetNodeStatus(Updater.Client(), nodes[0].Name)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status.Status.FailedResources).To(BeEmpty())
 
-				expectNodeCondition(g, infra.KindControlPlane, "Ready", metav1.ConditionTrue)
-				expectNodeCondition(g, infra.KindControlPlane, "Degraded", metav1.ConditionFalse)
+				expectNodeCondition(g, nodes[0].Name, "Ready", metav1.ConditionTrue)
+				expectNodeCondition(g, nodes[0].Name, "Degraded", metav1.ConditionFalse)
 			}, time.Minute, time.Second).Should(Succeed())
 		})
 	})
 })
+
+func withSelector[T interface {
+	v1alpha1.Underlay | v1alpha1.L3VNI | v1alpha1.L2VNI |
+		v1alpha1.L3VPN | v1alpha1.L3Passthrough | v1alpha1.RawFRRConfig
+}](resource T, name string, selector *metav1.LabelSelector) T {
+	switch obj := any(&resource).(type) {
+	case *v1alpha1.Underlay:
+		obj.Name = name
+		obj.Spec.NodeSelector = selector
+	case *v1alpha1.L3VNI:
+		obj.Name = name
+		obj.Spec.NodeSelector = selector
+	case *v1alpha1.L2VNI:
+		obj.Name = name
+		obj.Spec.NodeSelector = selector
+	case *v1alpha1.L3VPN:
+		obj.Name = name
+		obj.Spec.NodeSelector = selector
+	case *v1alpha1.L3Passthrough:
+		obj.Name = name
+		obj.Spec.NodeSelector = selector
+	case *v1alpha1.RawFRRConfig:
+		obj.Name = name
+		obj.Spec.NodeSelector = selector
+	}
+	return resource
+}
+
+func invalidSelectorFailure(kind v1alpha1.FailedResourceKind, name string) v1alpha1.FailedResource {
+	return v1alpha1.FailedResource{
+		Kind:    kind,
+		Name:    name,
+		Reason:  v1alpha1.FailedResourceReasonValidationFailed,
+		Message: `invalid node selector: "InvalidOp" is not a valid label selector operator`,
+	}
+}

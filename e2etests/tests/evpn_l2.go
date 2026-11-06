@@ -15,17 +15,19 @@ import (
 	"github.com/openperouter/openperouter/api/v1alpha1"
 	"github.com/openperouter/openperouter/e2etests/pkg/config"
 	"github.com/openperouter/openperouter/e2etests/pkg/executor"
+	"github.com/openperouter/openperouter/e2etests/pkg/frr"
 	"github.com/openperouter/openperouter/e2etests/pkg/infra"
 	"github.com/openperouter/openperouter/e2etests/pkg/ipfamily"
 	"github.com/openperouter/openperouter/e2etests/pkg/k8s"
 	"github.com/openperouter/openperouter/e2etests/pkg/k8sclient"
 	"github.com/openperouter/openperouter/e2etests/pkg/openperouter"
+	"github.com/openperouter/openperouter/e2etests/pkg/validate"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 )
 
-var _ = Describe("Routes between bgp and the fabric with Underlay in ipv4", Ordered, func() {
+var _ = Describe("Routes between bgp and the fabric with Underlay in ipv4", GroutSupport, Ordered, func() {
 	var (
 		cs      clientset.Interface
 		routers openperouter.Routers
@@ -76,7 +78,7 @@ var _ = Describe("Routes between bgp and the fabric with Underlay in ipv4", Orde
 
 		err = Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{
-				infra.Underlay,
+				infra.Underlay(infra.Default),
 			},
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -181,13 +183,13 @@ var _ = Describe("Routes between bgp and the fabric with Underlay in ipv4", Orde
 		for _, node := range nodes {
 			neighborIP, err := infra.NeighborIP(infra.KindLeaf, node.Name)
 			Expect(err).NotTo(HaveOccurred())
-			validateSessionWithNeighbor(
+			validate.SessionWithNeighbor(
 				leafExec,
-				validationParameters{
-					fromName:    infra.KindLeaf,
-					toName:      node.Name,
-					neighborIP:  neighborIP,
-					established: Established,
+				validate.SessionParameters{
+					FromName:    infra.KindLeaf,
+					ToName:      node.Name,
+					NeighborIP:  neighborIP,
+					Established: Established,
 				},
 			)
 		}
@@ -355,7 +357,7 @@ var _ = Describe("Routes between bgp and the fabric with Underlay in ipv4", Orde
 
 })
 
-var _ = Describe("Disconnected L2VNI east/west traffic", Ordered, func() {
+var _ = Describe("Disconnected L2VNI east/west traffic", GroutSupport, Ordered, func() {
 	const (
 		testNamespace             = "test-disconnected-l2"
 		linuxBridgeHostAttachment = "LinuxBridge"
@@ -389,7 +391,7 @@ var _ = Describe("Disconnected L2VNI east/west traffic", Ordered, func() {
 
 		err = Updater.Update(config.Resources{
 			Underlays: []v1alpha1.Underlay{
-				infra.Underlay,
+				infra.Underlay(infra.Default),
 			},
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -408,23 +410,27 @@ var _ = Describe("Disconnected L2VNI east/west traffic", Ordered, func() {
 		}, 2*time.Minute, time.Second).ShouldNot(HaveOccurred())
 	})
 
-	AfterEach(func() {
-		dumpIfFails(cs)
-		err := Updater.CleanButUnderlay()
-		Expect(err).NotTo(HaveOccurred())
-		err = k8s.DeleteNamespace(cs, testNamespace)
-		Expect(err).NotTo(HaveOccurred())
-	})
+	var (
+		nodes       []corev1.Node
+		l2VNIs      []v1alpha1.L2VNI
+		firstL2VNI  v1alpha1.L2VNI
+		secondL2VNI v1alpha1.L2VNI
+		firstPod    *corev1.Pod
+		secondPod   *corev1.Pod
+	)
 
-	It("should allow pod-to-pod L2 connectivity without a VRF", func() {
-		nodes, err := k8s.GetNodes(cs)
+	BeforeEach(func() {
+		var err error
+		nodes, err = k8s.GetNodes(cs)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(nodes)).To(BeNumerically(">=", 2))
 
+	})
+
+	JustBeforeEach(func() {
+		var err error
 		err = Updater.Update(config.Resources{
-			L2VNIs: []v1alpha1.L2VNI{
-				l2vniDisconnected,
-			},
+			L2VNIs: l2VNIs,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -435,11 +441,11 @@ var _ = Describe("Disconnected L2VNI east/west traffic", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating two pods on different nodes")
-		firstPod, err := k8s.CreateAgnhostPod(cs, "pod1", testNamespace,
+		firstPod, err = k8s.CreateAgnhostPod(cs, "pod1", testNamespace,
 			k8s.WithNad(nadObj.Name, testNamespace, []string{firstPodIP + "/24"}),
 			k8s.OnNode(nodes[0].Name))
 		Expect(err).NotTo(HaveOccurred())
-		secondPod, err := k8s.CreateAgnhostPod(cs, "pod2", testNamespace,
+		secondPod, err = k8s.CreateAgnhostPod(cs, "pod2", testNamespace,
 			k8s.WithNad(nadObj.Name, testNamespace, []string{secondPodIP + "/24"}),
 			k8s.OnNode(nodes[1].Name))
 		Expect(err).NotTo(HaveOccurred())
@@ -447,10 +453,123 @@ var _ = Describe("Disconnected L2VNI east/west traffic", Ordered, func() {
 		By("removing the default gateway via the primary interface")
 		Expect(removeGatewayFromPod(firstPod)).To(Succeed())
 		Expect(removeGatewayFromPod(secondPod)).To(Succeed())
+	})
 
-		By("checking bidirectional L2 reachability")
-		canPingFromPod(executor.ForPod(firstPod.Namespace, firstPod.Name, "agnhost"), secondPodIP)
-		canPingFromPod(executor.ForPod(secondPod.Namespace, secondPod.Name, "agnhost"), firstPodIP)
+	AfterEach(func() {
+		dumpIfFails(cs)
+		err := Updater.CleanButUnderlay()
+		Expect(err).NotTo(HaveOccurred())
+		err = k8s.DeleteNamespace(cs, testNamespace)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	Context("without route targets", func() {
+		BeforeEach(func() {
+			l2VNIs = []v1alpha1.L2VNI{l2vniDisconnected}
+		})
+
+		It("should allow pod-to-pod L2 connectivity without a VRF", func() {
+			By("checking bidirectional L2 reachability")
+			canPingFromPod(executor.ForPod(firstPod.Namespace, firstPod.Name, "agnhost"), secondPodIP)
+			canPingFromPod(executor.ForPod(secondPod.Namespace, secondPod.Name, "agnhost"), firstPodIP)
+		})
+	})
+
+	Context("with RD assigned number", func() {
+		const rdAssignedNumber int32 = 42000
+
+		BeforeEach(func() {
+			By("configuring the L2VNI RD assigned number")
+			configured := l2vniDisconnected.DeepCopy()
+			configured.Spec.RDAssignedNumber = new(rdAssignedNumber)
+			l2VNIs = []v1alpha1.L2VNI{*configured}
+		})
+
+		It("advertises both Type-2 routes under the configured RD on the leaf", func() {
+			routers, err := openperouter.Get(cs, HostMode)
+			Expect(err).To(Succeed())
+			leaf := executor.ForContainer(infra.KindLeaf)
+			ips := []string{firstPodIP, secondPodIP}
+			routerIDs := make([]string, 2)
+			vteps := make([]string, 2)
+			rts := []v1alpha1.RouteTarget{"64514:300"}
+			By("discovering each originating router ID and VTEP")
+			for i := range 2 {
+				origin, err := routers.ExecutorForNode(nodes[i].Name)
+				Expect(err).To(Succeed())
+				Eventually(func(g Gomega) {
+					info, err := frr.EVPNInfo(origin)
+					g.Expect(err).To(Succeed())
+					g.Expect(info.BgpLocalRouterId).NotTo(BeEmpty())
+					routerIDs[i] = info.BgpLocalRouterId
+				}, time.Minute, time.Second).Should(Succeed())
+				cidr, err := openperouter.GetVtepIPv4ForNode(infra.Underlay(infra.Default).Spec.TunnelEndpoint, &nodes[i])
+				Expect(err).To(Succeed())
+				vteps[i] = ipfamily.StripCIDRMask(cidr)
+			}
+			Expect(routerIDs[0]).NotTo(Equal(routerIDs[1]))
+			By("checking both Type-2 routes on the leaf under their originating router RDs")
+			Eventually(func(g Gomega) {
+				info, err := frr.EVPNInfo(leaf)
+				g.Expect(err).To(Succeed())
+				for i := range 2 {
+					rd := fmt.Sprintf("%s:%d", routerIDs[i], rdAssignedNumber)
+					g.Expect(info.ContainsRouteWithRD(rd, 2, ips[i], vteps[i], rts)).To(BeTrue(),
+						"pod %s should be under RD %s on receiving leaf", ips[i], rd)
+				}
+			}, time.Minute, time.Second).Should(Succeed())
+		})
+	})
+
+	Context("with route targets", func() {
+		BeforeEach(func() {
+			firstL2VNI = l2VNIForNode(
+				l2vniDisconnected, "disconnected-first", nodes[0].Name, "64514:300", "64514:301",
+			)
+			secondL2VNI = l2VNIForNode(
+				l2vniDisconnected, "disconnected-second", nodes[1].Name, "64514:301", "64514:300",
+			)
+			l2VNIs = []v1alpha1.L2VNI{firstL2VNI, secondL2VNI}
+		})
+
+		It("should retain configured route targets on imported type-2 routes", func() {
+			By("checking imported type-2 routes retain the configured route target")
+			routers, err := openperouter.Get(cs, HostMode)
+			Expect(err).NotTo(HaveOccurred())
+			firstRouter, err := routers.ExecutorForNode(nodes[0].Name)
+			Expect(err).NotTo(HaveOccurred())
+			secondRouter, err := routers.ExecutorForNode(nodes[1].Name)
+			Expect(err).NotTo(HaveOccurred())
+
+			firstVTEPCIDR, err := openperouter.GetVtepIPv4ForNode(infra.Underlay(infra.Default).Spec.TunnelEndpoint, &nodes[0])
+			Expect(err).NotTo(HaveOccurred())
+			secondVTEPCIDR, err := openperouter.GetVtepIPv4ForNode(infra.Underlay(infra.Default).Spec.TunnelEndpoint, &nodes[1])
+			Expect(err).NotTo(HaveOccurred())
+			firstVTEP := ipfamily.StripCIDRMask(firstVTEPCIDR)
+			secondVTEP := ipfamily.StripCIDRMask(secondVTEPCIDR)
+
+			Eventually(func(g Gomega) {
+				firstEVPN, err := frr.EVPNInfo(firstRouter)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(firstEVPN.ContainsType2MACIPRouteWithRT(
+					secondPodIP,
+					secondVTEP,
+					firstL2VNI.Spec.ImportRTs,
+				)).To(BeTrue(), "first node should import the second pod's type-2 route with its configured route target")
+
+				secondEVPN, err := frr.EVPNInfo(secondRouter)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(secondEVPN.ContainsType2MACIPRouteWithRT(
+					firstPodIP,
+					firstVTEP,
+					secondL2VNI.Spec.ImportRTs,
+				)).To(BeTrue(), "second node should import the first pod's type-2 route with its configured route target")
+			}, time.Minute, time.Second).Should(Succeed())
+
+			By("checking bidirectional L2 reachability")
+			canPingFromPod(executor.ForPod(firstPod.Namespace, firstPod.Name, "agnhost"), secondPodIP)
+			canPingFromPod(executor.ForPod(secondPod.Namespace, secondPod.Name, "agnhost"), firstPodIP)
+		})
 	})
 })
 
@@ -507,4 +626,21 @@ func findNextHopIPv6(exec executor.Executor, destination, device string) (string
 
 func discardAddressLength(address string) string {
 	return strings.Split(address, "/")[0]
+}
+
+func l2VNIForNode(
+	l2vni v1alpha1.L2VNI,
+	name, nodeName string,
+	exportRT, importRT v1alpha1.RouteTarget,
+) v1alpha1.L2VNI {
+	configured := l2vni.DeepCopy()
+	configured.Name = name
+	configured.Spec.NodeSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"kubernetes.io/hostname": nodeName,
+		},
+	}
+	configured.Spec.ExportRTs = []v1alpha1.RouteTarget{exportRT}
+	configured.Spec.ImportRTs = []v1alpha1.RouteTarget{importRT}
+	return *configured
 }
