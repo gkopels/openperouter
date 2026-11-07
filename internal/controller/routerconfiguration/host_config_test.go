@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/vishvananda/netns"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/openperouter/openperouter/api/v1alpha1"
@@ -18,6 +19,91 @@ import (
 )
 
 func TestSetupL2VNIs(t *testing.T) {
+	red := l2VNIForTest("red", 100)
+	blue := l2VNIForTest("blue", 200)
+	const missingNamespace = "/does-not-exist"
+
+	_, openErr := netns.GetFromPath(missingNamespace)
+	require.Error(t, openErr, "the namespace path of the test must not exist")
+	openFailure := fmt.Sprintf("transient host failure: failed to get network namespace %s: %v",
+		missingNamespace, openErr)
+
+	tests := []struct {
+		name            string
+		l2VNIs          []hostnetwork.L2VNIParams
+		targetNamespace string
+		wantKept        []hostnetwork.L2VNIParams
+		wantErrs        []error
+	}{
+		{
+			name:            "no L2VNIs does not open the namespace",
+			targetNamespace: missingNamespace,
+		},
+		{
+			name:            "a namespace open failure keeps every L2VNI and is reported for each",
+			l2VNIs:          []hostnetwork.L2VNIParams{red, blue},
+			targetNamespace: missingNamespace,
+			wantKept:        []hostnetwork.L2VNIParams{red, blue},
+			wantErrs: []error{
+				wantL2VNIError("red", openFailure),
+				wantL2VNIError("blue", openFailure),
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, errs := setupL2VNIs(context.Background(), &hostnetwork.OVSClient{}, tc.l2VNIs, tc.targetNamespace)
+
+			require.Equal(t, tc.wantKept, kept)
+			require.Equal(t, tc.wantErrs, errs)
+		})
+	}
+}
+
+func TestKeepL2VNIsOnTransientFailure(t *testing.T) {
+	red := l2VNIForTest("red", 100)
+	blue := l2VNIForTest("blue", 200)
+	errTransient := fmt.Errorf("%w: failed to open the router namespace", openpeerrors.ErrTransient)
+	errPermanent := errors.New("invalid router namespace path")
+
+	tests := []struct {
+		name     string
+		l2VNIs   []hostnetwork.L2VNIParams
+		err      error
+		wantKept []hostnetwork.L2VNIParams
+		wantErrs []error
+	}{
+		{
+			name:     "a transient failure keeps every L2VNI",
+			l2VNIs:   []hostnetwork.L2VNIParams{red, blue},
+			err:      errTransient,
+			wantKept: []hostnetwork.L2VNIParams{red, blue},
+			wantErrs: []error{
+				wantL2VNIError("red", errTransient.Error()),
+				wantL2VNIError("blue", errTransient.Error()),
+			},
+		},
+		{
+			name:   "any other failure leaves every L2VNI out",
+			l2VNIs: []hostnetwork.L2VNIParams{red, blue},
+			err:    errPermanent,
+			wantErrs: []error{
+				wantL2VNIError("red", errPermanent.Error()),
+				wantL2VNIError("blue", errPermanent.Error()),
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, errs := keepL2VNIsOnTransientFailure(tc.l2VNIs, tc.err)
+
+			require.Equal(t, tc.wantKept, kept)
+			require.Equal(t, tc.wantErrs, errs)
+		})
+	}
+}
+
+func TestSetupEachL2VNI(t *testing.T) {
 	red := l2VNIForTest("red", 100)
 	blue := l2VNIForTest("blue", 200)
 	errOVSDB := fmt.Errorf("%w: failed to connect to OVSDB", openpeerrors.ErrTransient)
@@ -30,6 +116,9 @@ func TestSetupL2VNIs(t *testing.T) {
 		wantKept  []hostnetwork.L2VNIParams
 		wantErrs  []error
 	}{
+		{
+			name: "no L2VNIs",
+		},
 		{
 			name:     "all set up",
 			l2VNIs:   []hostnetwork.L2VNIParams{red, blue},
@@ -62,11 +151,6 @@ func TestSetupL2VNIs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			originalSetup := setupSingleL2VNI
-			t.Cleanup(func() { setupSingleL2VNI = originalSetup })
-			setupSingleL2VNI = func(_ context.Context, _ *hostnetwork.OVSClient, vni hostnetwork.L2VNIParams) error {
-				return tc.setupErrs[vni.Name]
-			}
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(func() {
 				cancel()
@@ -74,11 +158,14 @@ func TestSetupL2VNIs(t *testing.T) {
 					require.NoError(t, bridgerefresh.StopForVNI(vni.VNI))
 				}
 			})
+			provisioner := &fakeL2VNIProvisioner{setupErrs: tc.setupErrs}
 
-			kept, errs := setupL2VNIs(ctx, &hostnetwork.OVSClient{}, tc.l2VNIs)
+			kept, errs := setupEachL2VNI(ctx, provisioner, tc.l2VNIs)
 
 			require.Equal(t, tc.wantKept, kept)
 			require.Equal(t, tc.wantErrs, errs)
+			require.Equal(t, tc.l2VNIs, provisioner.setUp,
+				"every L2VNI must be set up through the provisioner of the pass")
 		})
 	}
 }
@@ -134,4 +221,16 @@ func wantL2VNIError(name, message string) error {
 			Message: message,
 		},
 	}
+}
+
+// fakeL2VNIProvisioner records the L2VNIs of a pass and fails the ones the
+// test configured to fail.
+type fakeL2VNIProvisioner struct {
+	setupErrs map[string]error
+	setUp     []hostnetwork.L2VNIParams
+}
+
+func (f *fakeL2VNIProvisioner) Setup(_ context.Context, params hostnetwork.L2VNIParams) error {
+	f.setUp = append(f.setUp, params)
+	return f.setupErrs[params.Name]
 }

@@ -246,6 +246,75 @@ def get_normalized_ebgp_multihop_line(line):
     return line
 
 
+def get_normalized_aggregate_address_line(line):
+    """
+    The keywords of an "aggregate-address" command can be entered in any
+    order, but FRR always renders them in a fixed order:
+
+      aggregate-address <prefix> [as-set] [summary-only] [route-map NAME]
+          [origin <egp|igp|incomplete>] [matching-MED-only] [suppress-map NAME]
+
+    Reorder a user-supplied line into that canonical order so that a line
+    written with the keywords in a different order is not seen as a change.
+    Otherwise frr-reload deletes and re-adds the aggregate on every reload,
+    briefly withdrawing the aggregate route.
+    """
+    match = re.match(
+        r"^aggregate-address\s+(\S+(?:\s+\d+\.\d+\.\d+\.\d+)?)\s*(.*)$", line
+    )
+    if not match:
+        return line
+
+    prefix = match.group(1)
+    rest = match.group(2).split()
+
+    as_set = False
+    summary_only = False
+    match_med = False
+    route_map = None
+    origin = None
+    suppress_map = None
+
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "as-set":
+            as_set = True
+        elif tok == "summary-only":
+            summary_only = True
+        elif tok == "matching-MED-only":
+            match_med = True
+        elif tok == "route-map" and i + 1 < len(rest):
+            i += 1
+            route_map = rest[i]
+        elif tok == "origin" and i + 1 < len(rest):
+            i += 1
+            origin = rest[i]
+        elif tok == "suppress-map" and i + 1 < len(rest):
+            i += 1
+            suppress_map = rest[i]
+        else:
+            # Unrecognized token; leave the line untouched.
+            return line
+        i += 1
+
+    normalized = "aggregate-address " + prefix
+    if as_set:
+        normalized += " as-set"
+    if summary_only:
+        normalized += " summary-only"
+    if route_map:
+        normalized += " route-map " + route_map
+    if origin:
+        normalized += " origin " + origin
+    if match_med:
+        normalized += " matching-MED-only"
+    if suppress_map:
+        normalized += " suppress-map " + suppress_map
+
+    return normalized
+
+
 # This dictionary contains a tree of all commands that we know start a
 # new multi-line context. All other commands are treated either as
 # commands inside a multi-line context or as single-line contexts. This
@@ -394,6 +463,9 @@ class Config(object):
 
             if "ebgp-multihop" in line:
                 line = get_normalized_ebgp_multihop_line(line)
+
+            if line.startswith("aggregate-address "):
+                line = get_normalized_aggregate_address_line(line)
 
             # vrf static routes can be added in two ways. The old way is:
             #
@@ -921,10 +993,7 @@ def bgp_delete_nbr_remote_as_line(lines_to_add):
             if ctx_keys[0] in pg_dict:
                 # Find 'neighbor <pg_name> remote-as'
                 re_pg_rmtas = re.search(pg_rmtas, line)
-                if (
-                    re_pg_rmtas
-                    and re_pg_rmtas.group(1) in pg_dict[ctx_keys[0]]
-                ):
+                if re_pg_rmtas and re_pg_rmtas.group(1) in pg_dict[ctx_keys[0]]:
                     pg_dict[ctx_keys[0]][re_pg_rmtas.group(1)]["remoteas"] = True
 
                 # Find 'neighbor <peer> [interface] peer-group <pg_name>'
@@ -932,9 +1001,12 @@ def bgp_delete_nbr_remote_as_line(lines_to_add):
                 if (
                     re_nbr_pg
                     and re_nbr_pg.group(1) in pg_dict[ctx_keys[0]]
-                    and re_nbr_pg.group(2) not in pg_dict[ctx_keys[0]][re_nbr_pg.group(1)]
+                    and re_nbr_pg.group(2)
+                    not in pg_dict[ctx_keys[0]][re_nbr_pg.group(1)]
                 ):
-                    pg_dict[ctx_keys[0]][re_nbr_pg.group(1)]["nbr"].append(re_nbr_pg.group(2))
+                    pg_dict[ctx_keys[0]][re_nbr_pg.group(1)]["nbr"].append(
+                        re_nbr_pg.group(2)
+                    )
 
     # Find any neighbor <nbr> remote-as config line check if the nbr
     # is in the peer group's list of nbrs. Remove 'neighbor <nbr> remote-as <>'
@@ -1377,6 +1449,7 @@ def ignore_delete_re_add_lines(lines_to_add, lines_to_del):
                     save_line = "EMPTY"
                     for ctx_keys_al, add_line in lines_to_add:
                         if ctx_keys_al[0].startswith("router bgp"):
+                            rm_match = None
                             if add_line:
                                 rm_match = re.search(search, add_line)
                             if rm_match:
@@ -1803,6 +1876,9 @@ def compare_context_objects(newconf, running):
                 lines_to_del.append((running_ctx_keys, None))
 
             # We cannot do 'no interface' or 'no vrf' in FRR, and so deal with it
+            # If we try 'no interface' for still active interface, FRR tries to delete it and fails.
+            # All commands under 'interface' section MUST support 'no' commands and exit silently
+            # without errors if interface is deleted
             elif (
                 running_ctx_keys[0].startswith("interface")
                 or running_ctx_keys[0].startswith("vrf")
@@ -1884,18 +1960,15 @@ def compare_context_objects(newconf, running):
             ):
                 continue
 
-            # Segment routing and traffic engineering never need to be deleted
+            # Segment routing and its srv6 stanza never need to be deleted (they are automatically
+            # removed if they are empty)
             elif (
                 running_ctx_keys[0].startswith("segment-routing")
-                and len(running_ctx_keys) < 3
-            ):
-                continue
-
-            # Neither the pcep command
-            elif (
-                len(running_ctx_keys) == 3
-                and running_ctx_keys[0].startswith("segment-routing")
-                and running_ctx_keys[2].startswith("pcep")
+                and len(running_ctx_keys) == 1
+            ) or (
+                running_ctx_keys[0].startswith("segment-routing")
+                and running_ctx_keys[1].startswith("srv6")
+                and len(running_ctx_keys) == 2
             ):
                 continue
 
@@ -2012,13 +2085,9 @@ def compare_context_objects(newconf, running):
     if len(candidates_to_add) > 0:
         lines_to_add.extend(candidates_to_add)
 
-    (lines_to_add, lines_to_del) = ignore_delete_re_add_lines(
-        lines_to_add, lines_to_del
-    )
-    (lines_to_add, lines_to_del) = delete_move_lines(lines_to_add, lines_to_del)
-    (lines_to_add, lines_to_del) = ignore_unconfigurable_lines(
-        lines_to_add, lines_to_del
-    )
+    lines_to_add, lines_to_del = ignore_delete_re_add_lines(lines_to_add, lines_to_del)
+    lines_to_add, lines_to_del = delete_move_lines(lines_to_add, lines_to_del)
+    lines_to_add, lines_to_del = ignore_unconfigurable_lines(lines_to_add, lines_to_del)
 
     return (lines_to_add, lines_to_del)
 
@@ -2286,7 +2355,7 @@ if __name__ == "__main__":
         else:
             running.load_from_show_running(args.daemon)
 
-        (lines_to_add, lines_to_del) = compare_context_objects(newconf, running)
+        lines_to_add, lines_to_del = compare_context_objects(newconf, running)
 
         if lines_to_del:
             if not args.test_reset:
@@ -2386,7 +2455,7 @@ if __name__ == "__main__":
             running.load_from_show_running(args.daemon)
             log.debug(f"Running Frr Config (Pass #{x})\n{running.get_lines()}")
 
-            (lines_to_add, lines_to_del) = compare_context_objects(newconf, running)
+            lines_to_add, lines_to_del = compare_context_objects(newconf, running)
 
             if x == 0:
                 lines_to_add_first_pass = lines_to_add

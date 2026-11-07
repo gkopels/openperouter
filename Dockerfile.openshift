@@ -65,8 +65,11 @@ COPY systemdmode/frrconfig/vtysh.conf /etc/frr/vtysh.conf
 COPY systemdmode/frrconfig/frr.conf /etc/frr/frr.conf
 COPY openshift/frr-docker-start /usr/lib/frr/docker-start
 
-# Hack for https://github.com/FRRouting/frr/issues/20355
-#          https://github.com/FRRouting/frr/pull/20378
+# frr-reload.py from the FDP frr RPM (/usr/libexec/frr/frr-reload.py) with
+# 0001-tools-frr-reload.py-fix-double-deletion-of-segment-r.patch applied.
+# Hack for https://github.com/FRRouting/frr/issues/23383
+#          https://github.com/FRRouting/frr/pull/23382
+# The controller invokes the reloader from /usr/lib/frr, which the RPM does not populate.
 COPY openshift/frr-reload.py.patched /usr/lib/frr/frr-reload.py
 
 LABEL com.redhat.component="openperouter" \

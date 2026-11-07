@@ -135,6 +135,7 @@ done
 
 cat > "${NODELINK_OUT}" << TOPOEOF
 {
+  "underlayHostIfaces": ["toswitch1", "toswitch2"],
   "nodes": {${NODES_JSON}
   }
 }
