@@ -360,6 +360,25 @@ $(APIDOCSGEN): $(LOCALBIN)
 e2etests: ginkgo kubectl create-export-logs
 	$(GINKGO) -v $(GINKGO_ARGS) --json-report=e2e-report.json --output-dir=${KIND_EXPORT_LOGS} --timeout=3h ./e2etests/suite -- --kubectl=$(KUBECTL) $(TEST_ARGS) --reporterpath=${KIND_EXPORT_LOGS}
 
+.PHONY: e2e-bastion
+e2e-bastion: ## Bastion OCP lifecycle: bridges+clab → e2etests → teardown (not KIND make deploy). Set OPENPE_KUBECONFIG; source openshift/e2e/bastion.env.example (OPENPE_UNDERLAY_IFACE, provider=bastion).
+	@if [ -z "$(OPENPE_KUBECONFIG)" ]; then \
+	  echo "ERROR: set OPENPE_KUBECONFIG=/path/to/ocp/kubeconfig" >&2; \
+	  echo "  (make exports KUBECONFIG=$(LOCALBIN)/kubeconfig for KIND; do not use that for bastion)" >&2; \
+	  echo "  also: set -a && source openshift/e2e/bastion.env.example && set +a  # OPENPE_UNDERLAY_IFACE, etc." >&2; \
+	  exit 1; \
+	fi
+	@if [ ! -f "$(OPENPE_KUBECONFIG)" ]; then \
+	  echo "ERROR: OPENPE_KUBECONFIG file not found: $(OPENPE_KUBECONFIG)" >&2; \
+	  exit 1; \
+	fi
+	@if [ "$(OPENPE_KUBECONFIG)" = "$(LOCALBIN)/kubeconfig" ] || \
+	   [ "$(abspath $(OPENPE_KUBECONFIG))" = "$(abspath $(LOCALBIN)/kubeconfig)" ]; then \
+	  echo "ERROR: OPENPE_KUBECONFIG points at KIND $(LOCALBIN)/kubeconfig — use the OCP kubeconfig" >&2; \
+	  exit 1; \
+	fi
+	KUBECONFIG="$(OPENPE_KUBECONFIG)" ./openshift/e2e/e2e-bastion.sh
+
 .PHONY: e2etests-hostmode-boot
 e2etests-hostmode-boot: ginkgo kubectl create-export-logs ## Run e2e tests for hostmode boot scenario (static config first, then K8s API).
 	@echo "=== Running systemd_static_suite tests (static config only) ==="
