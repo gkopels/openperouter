@@ -2,7 +2,8 @@
 # Bastion e2e lifecycle:
 #   deploy-bastion.sh → configure-bastion-worker-net.sh → run_tests-bastion.sh
 # EXIT (unless OPENPE_E2E_SKIP_TEARDOWN=true):
-#   teardown-bastion-worker-net.sh → teardown-clab.sh → teardown_frrk8s.sh
+#   teardown-bastion-worker-net.sh → teardown-clab.sh
+# FRR-K8s is a lab/CI prerequisite (not deployed or torn down here).
 #
 # Usage:
 #   export KUBECONFIG=/path/to/ocp/kubeconfig
@@ -41,11 +42,6 @@ teardown() {
     echo "=== EXIT trap: teardown-clab ==="
     bash "${SCRIPT_DIR}/teardown-clab.sh" || {
       echo "ERROR: teardown-clab failed" >&2
-      td_rc=1
-    }
-    echo "=== EXIT trap: teardown-frrk8s ==="
-    bash "${SCRIPT_DIR}/teardown_frrk8s.sh" || {
-      echo "ERROR: teardown-frrk8s failed" >&2
       td_rc=1
     }
   fi

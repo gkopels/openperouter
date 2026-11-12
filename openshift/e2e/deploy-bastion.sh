@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Bastion bring-up: wait/enable frr-k8s, bridges, then setup-clab-bastion.sh.
-# Does NOT run KIND (make deploy). OpenPE must already be installed.
-# Default: wait for existing frr-k8s (OPENPE_E2E_DEPLOY_FRRK8S=false).
+# Bastion bring-up: require Ready FRR-K8s, bridges, then setup-clab-bastion.sh.
+# Does NOT run KIND (make deploy). OpenPE and FRR-K8s must already be installed
+# (CI or lab provisions CNO FRR; this script only waits for readiness).
 #
 # Usage:
 #   export KUBECONFIG=/path/to/ocp/kubeconfig
@@ -21,7 +21,6 @@ export CLAB_EXECUTOR="${CLAB_EXECUTOR:-local}"
 export CLAB_RUNTIME="${CLAB_RUNTIME:-docker}"
 export OPENPE_CLAB_RUNTIME="${OPENPE_CLAB_RUNTIME:-${CLAB_RUNTIME}}"
 
-DEPLOY_FRRK8S="${OPENPE_E2E_DEPLOY_FRRK8S:-false}"
 OPENPE_NS="${OPENPE_E2E_NAMESPACE:-openshift-openperouter}"
 FRRK8S_NAMESPACE="${FRRK8S_NAMESPACE:-openshift-frr-k8s}"
 FRRK8S_SELECTOR="${FRRK8S_SELECTOR:-app=frr-k8s}"
@@ -30,8 +29,8 @@ FRRK8S_TIMEOUT="${FRRK8S_TIMEOUT:-5m}"
 echo "=== deploy-bastion ==="
 echo "  KUBECONFIG=${KUBECONFIG}"
 echo "  CLAB_EXECUTOR=${CLAB_EXECUTOR} CLAB_RUNTIME=${CLAB_RUNTIME}"
-echo "  OPENPE_E2E_DEPLOY_FRRK8S=${DEPLOY_FRRK8S}"
 echo "  openperouter-namespace=${OPENPE_NS}"
+echo "  frrk8s-namespace=${FRRK8S_NAMESPACE} (prerequisite)"
 
 oc get nodes >/dev/null
 
@@ -55,20 +54,26 @@ for ds in controller router; do
 done
 echo "=== OpenPE prerequisites OK ==="
 
-if [[ "${DEPLOY_FRRK8S}" == "true" ]]; then
-  bash "${SCRIPT_DIR}/deploy_frrk8s.sh"
-else
-  echo "Skipping frr-k8s deploy (OPENPE_E2E_DEPLOY_FRRK8S=${DEPLOY_FRRK8S})"
-  oc get ns "${FRRK8S_NAMESPACE}" >/dev/null || {
-    echo "ERROR: ${FRRK8S_NAMESPACE} missing; set OPENPE_E2E_DEPLOY_FRRK8S=true or enable CNO FRR first" >&2
-    exit 1
-  }
-  echo "Waiting for existing FRR-K8s pods to be Ready in ${FRRK8S_NAMESPACE}"
-  oc wait pod -n "${FRRK8S_NAMESPACE}" -l "${FRRK8S_SELECTOR}" \
-    --for=create --timeout="${FRRK8S_TIMEOUT}"
-  oc wait pod -n "${FRRK8S_NAMESPACE}" -l "${FRRK8S_SELECTOR}" \
-    --for=condition=Ready --timeout="${FRRK8S_TIMEOUT}"
+echo "=== Checking FRR-K8s prerequisite ==="
+oc get ns "${FRRK8S_NAMESPACE}" >/dev/null || {
+  echo "ERROR: ${FRRK8S_NAMESPACE} missing — provision CNO FRR / FRR-K8s before bastion e2e" >&2
+  echo "  (lab or CI must enable additionalRoutingCapabilities providers FRR; bastion does not patch CNO)" >&2
+  exit 1
+}
+echo "Waiting for FRR-K8s pods to be Ready in ${FRRK8S_NAMESPACE} (selector ${FRRK8S_SELECTOR}, timeout ${FRRK8S_TIMEOUT})"
+if ! oc wait pod -n "${FRRK8S_NAMESPACE}" -l "${FRRK8S_SELECTOR}" \
+  --for=create --timeout="${FRRK8S_TIMEOUT}"; then
+  echo "ERROR: no FRR-K8s pods matched ${FRRK8S_SELECTOR} in ${FRRK8S_NAMESPACE} within ${FRRK8S_TIMEOUT}" >&2
+  oc get pods -n "${FRRK8S_NAMESPACE}" -o wide >&2 || true
+  exit 1
 fi
+if ! oc wait pod -n "${FRRK8S_NAMESPACE}" -l "${FRRK8S_SELECTOR}" \
+  --for=condition=Ready --timeout="${FRRK8S_TIMEOUT}"; then
+  echo "ERROR: FRR-K8s pods in ${FRRK8S_NAMESPACE} did not become Ready within ${FRRK8S_TIMEOUT}" >&2
+  oc get pods -n "${FRRK8S_NAMESPACE}" -o wide >&2 || true
+  exit 1
+fi
+echo "=== FRR-K8s prerequisite OK ==="
 
 bash "${SCRIPT_DIR}/setup-bastion-bridges.sh"
 bash "${SCRIPT_DIR}/setup-clab-bastion.sh"
@@ -81,4 +86,3 @@ echo "  ./openshift/e2e/run_tests-bastion.sh"
 echo "Teardown:"
 echo "  ./openshift/e2e/teardown-bastion-worker-net.sh"
 echo "  ./openshift/e2e/teardown-clab.sh"
-echo "  ./openshift/e2e/teardown_frrk8s.sh"

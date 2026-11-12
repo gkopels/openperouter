@@ -27,6 +27,8 @@ export KUBECONFIG=/root/dev-scripts/ocp/ostest/auth/kubeconfig
 Layout: `eth0` = mgmt/SSH; `eth1`→`toswitch1`, `eth2`→`toswitch2` (no gateway on lab NICs).
 Default container runtime: **docker** (`CLAB_RUNTIME` / `OPENPE_CLAB_RUNTIME`).
 
+**Prerequisite:** CI or the lab must provision FRR-K8s (CNO `additionalRoutingCapabilities` / `openshift-frr-k8s`) before the bastion run. Bastion e2e only waits for Ready pods; it does not enable or tear down CNO FRR.
+
 ### Full lifecycle
 
 ```bash
@@ -38,10 +40,10 @@ make e2e-bastion
 
 Flow:
 
-1. `deploy-bastion.sh` → wait/enable frr-k8s + bridges + `setup-clab-bastion.sh`
+1. `deploy-bastion.sh` → wait for FRR-K8s readiness, then set up bridges and containerlab
 2. `configure-bastion-worker-net.sh` → worker underlay IPs (`OPENPE_UNDERLAY_IFACE*`)
 3. `run_tests-bastion.sh` → Ginkgo (optional `OPENPE_E2E_FOCUS` / `OPENPE_E2E_SKIP`)
-4. EXIT (unless `OPENPE_E2E_SKIP_TEARDOWN=true`): worker-net → `teardown-clab.sh` → `teardown_frrk8s.sh`
+4. EXIT (unless `OPENPE_E2E_SKIP_TEARDOWN=true`): worker-net → `teardown-clab.sh`
 
 ### Step by step
 
@@ -83,6 +85,6 @@ See `bastion.env.example`. `podman-root.sh` remains available for optional podma
 | `deploy-bastion.sh` / `e2e-bastion.sh` | Bastion bring-up / lifecycle |
 | `configure-bastion-worker-net.sh` / `teardown-bastion-worker-net.sh` | Worker underlay IPs |
 | `teardown-clab.sh` | Destroy fabric; keep bridges/mgmt |
-| `deploy_frrk8s.sh` / `teardown_frrk8s.sh` | CNO FRR enable / restore |
+| `deploy_frrk8s.sh` | FRR-K8s setup helper for the metal / virtual OCP path (`deploy.sh`) |
 | `bastion.env.example` | Bastion env template |
 | `podman-root.sh` | Optional rootful podman wrapper |

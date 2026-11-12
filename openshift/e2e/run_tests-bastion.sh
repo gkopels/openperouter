@@ -1,8 +1,9 @@
 #!/bin/bash
 # Bastion-only e2e runner against nodelink.json + real worker underlay NICs.
 #
-# Requires: KUBECONFIG, nodelink.json, OPENPE_UNDERLAY_IFACE{,2}
+# Requires: KUBECONFIG, nodelink.json (underlay NICs validated in setup/configure).
 # Default container runtime: docker (OPENPE_CLAB_RUNTIME / CLAB_RUNTIME / CONTAINER_RUNTIME).
+# OPENPE_E2E_NODE_SELECTOR drives nodelink generation and --instrumented-nodes-label.
 #
 # Usage:
 #   export KUBECONFIG=...
@@ -13,7 +14,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODELINK="${SCRIPT_DIR}/nodelink.json"
-STATE_FILE="${SCRIPT_DIR}/.e2e-bastion-state/worker-net.json"
 
 join() {
   local IFS="$1"
@@ -24,7 +24,7 @@ join() {
 RUNTIME="${CONTAINER_RUNTIME:-${OPENPE_CLAB_RUNTIME:-${CLAB_RUNTIME:-docker}}}"
 OPENPE_NS="${OPENPE_E2E_NAMESPACE:-openshift-openperouter}"
 FRRK8S_NAMESPACE="${FRRK8S_NAMESPACE:-openshift-frr-k8s}"
-INSTRUMENTED_NODES_LABEL="${OPENPE_E2E_INSTRUMENTED_NODES_LABEL:-${OPENPE_E2E_NODE_SELECTOR:-node-role.kubernetes.io/worker}}"
+INSTRUMENTED_NODES_LABEL="${OPENPE_E2E_NODE_SELECTOR:-node-role.kubernetes.io/worker}"
 
 if [[ -z "${KUBECONFIG:-}" ]]; then
   echo "ERROR: KUBECONFIG must be set for bastion e2e" >&2
@@ -38,19 +38,6 @@ if [[ ! -f "${NODELINK}" ]]; then
   echo "ERROR: ${NODELINK} missing — run setup-clab-bastion.sh / deploy-bastion first" >&2
   exit 1
 fi
-
-if [[ -z "${OPENPE_UNDERLAY_IFACE:-}" && -f "${STATE_FILE}" ]]; then
-  OPENPE_UNDERLAY_IFACE="$(python3 -c "import json; print(json.load(open('${STATE_FILE}')).get('underlayIface') or '')")"
-fi
-if [[ -z "${OPENPE_UNDERLAY_IFACE2:-}" && -f "${STATE_FILE}" ]]; then
-  OPENPE_UNDERLAY_IFACE2="$(python3 -c "import json; print(json.load(open('${STATE_FILE}')).get('underlayIface2') or '')")"
-fi
-if [[ -z "${OPENPE_UNDERLAY_IFACE:-}" || -z "${OPENPE_UNDERLAY_IFACE2:-}" ]]; then
-  echo "ERROR: bastion requires OPENPE_UNDERLAY_IFACE and OPENPE_UNDERLAY_IFACE2" >&2
-  exit 1
-fi
-export OPENPE_UNDERLAY_IFACE
-export OPENPE_UNDERLAY_IFACE2
 
 # Same excludes as openshift/e2e/run_tests.sh (main / virtual OCP).
 EXCLUDE_ARRAY=(
@@ -101,8 +88,6 @@ echo "  openperouter-namespace=${OPENPE_NS}"
 echo "  frrk8s-namespace=${FRRK8S_NAMESPACE}"
 echo "  nodelink=${NODELINK}"
 echo "  instrumented-nodes-label=${INSTRUMENTED_NODES_LABEL}"
-echo "  OPENPE_UNDERLAY_IFACE=${OPENPE_UNDERLAY_IFACE}"
-echo "  OPENPE_UNDERLAY_IFACE2=${OPENPE_UNDERLAY_IFACE2}"
 echo "  focus=${OPENPE_E2E_FOCUS:-}"
 echo "  skip=${SKIP}"
 

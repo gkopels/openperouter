@@ -73,7 +73,7 @@ node_exec() {
 }
 
 # Build apply list from nodelink; env overrides iface names when set.
-# Write worker-net.json via json.dump (include iface env for run_tests / Ginkgo).
+# Write worker-net.json via json.dump (iface names + entries for teardown).
 export OPENPE_UNDERLAY_IFACE="${OPENPE_UNDERLAY_IFACE:-}"
 export OPENPE_UNDERLAY_IFACE2="${OPENPE_UNDERLAY_IFACE2:-}"
 mkdir -p "${STATE_DIR}"
