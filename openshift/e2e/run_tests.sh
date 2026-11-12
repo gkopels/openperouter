@@ -44,17 +44,56 @@ elif [[ -z "${PROVIDER}" ]]; then
 	PROVIDER="dev-scripts"
 fi
 
-# Bastion: clab is deployed with sudo podman (rootful). Ginkgo uses
-# CONTAINER_RUNTIME as a single binary — default to podman-root.sh so tests
-# see the same containers. KIND / virtual OCP keep docker unless overridden.
-if [[ "${PROVIDER}" == "bastion" ]]; then
-	RUNTIME="${CONTAINER_RUNTIME:-${SCRIPT_DIR}/podman-root.sh}"
-	if [[ "${RUNTIME}" == "${SCRIPT_DIR}/podman-root.sh" && ! -x "${RUNTIME}" ]]; then
-		echo "ERROR: bastion default runtime missing or not executable: ${RUNTIME}" >&2
-		exit 1
+# Container runtime for Ginkgo / clab helpers (cp into leaf containers, etc.).
+#
+# Policy:
+#   bastion     — default rootful podman wrapper (matches setup-clab). Override
+#                 with CONTAINER_RUNTIME=/path/to/bin or docker|podman.
+#   dev-scripts — default docker (same as main / metal CI). Do NOT inherit the
+#                 job-host CONTAINER_RUNTIME: OpenShift metal CI exports
+#                 CONTAINER_RUNTIME=podman for the provisioner, but that binary
+#                 is not on PATH in the e2e step (was: "podman: not found").
+#                 Opt into podman/docker explicitly via OPENPE_CLAB_RUNTIME or
+#                 CLAB_RUNTIME when the binary is available.
+#
+# If the chosen name is not executable, fall back: bastion tries podman then
+# docker; dev-scripts tries docker then podman. Fail if neither works.
+runtime_available() {
+	local r="$1"
+	if [[ "${r}" == */* ]]; then
+		[[ -x "${r}" ]]
+	else
+		command -v "${r}" >/dev/null 2>&1
 	fi
+}
+
+pick_runtime() {
+	local preferred="$1"
+	shift
+	local cand
+	if runtime_available "${preferred}"; then
+		echo "${preferred}"
+		return 0
+	fi
+	for cand in "$@"; do
+		if runtime_available "${cand}"; then
+			echo "WARN: preferred container runtime '${preferred}' not available; using '${cand}'" >&2
+			echo "${cand}"
+			return 0
+		fi
+	done
+	echo "ERROR: no usable container runtime (tried '${preferred}' then: $*)" >&2
+	echo "  set OPENPE_CLAB_RUNTIME or CONTAINER_RUNTIME to an executable docker/podman" >&2
+	return 1
+}
+
+if [[ "${PROVIDER}" == "bastion" ]]; then
+	PREFERRED="${CONTAINER_RUNTIME:-${OPENPE_CLAB_RUNTIME:-${CLAB_RUNTIME:-${SCRIPT_DIR}/podman-root.sh}}}"
+	RUNTIME="$(pick_runtime "${PREFERRED}" "${SCRIPT_DIR}/podman-root.sh" podman docker)"
 else
-	RUNTIME="${CONTAINER_RUNTIME:-${CLAB_RUNTIME:-${OPENPE_CLAB_RUNTIME:-docker}}}"
+	# Ignore ambient CONTAINER_RUNTIME from the CI host (see comment above).
+	PREFERRED="${OPENPE_CLAB_RUNTIME:-${CLAB_RUNTIME:-docker}}"
+	RUNTIME="$(pick_runtime "${PREFERRED}" docker podman)"
 fi
 
 # Namespace where OpenPERouter runs (OCP CI: openshift-openperouter; some labs: openperouter-system)
