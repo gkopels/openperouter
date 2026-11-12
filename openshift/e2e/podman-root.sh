@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Rootful podman wrapper for bastion e2e.
-# setup-clab.sh deploys with "sudo podman"; Ginkgo uses CONTAINER_RUNTIME as a
-# single binary, so point CONTAINER_RUNTIME at this script.
-# Requires passwordless sudo (sudo -n) — same as setup-bastion-bridges.sh.
+# Optional rootful podman wrapper. Bastion defaults use docker; set
+# CONTAINER_RUNTIME to this script only when overriding to podman.
+# Requires passwordless sudo (sudo -n).
 set -euo pipefail
 PODMAN="$(command -v podman || true)"
 if [[ -z "${PODMAN}" ]]; then

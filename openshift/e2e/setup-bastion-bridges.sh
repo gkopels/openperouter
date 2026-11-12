@@ -1,26 +1,10 @@
 #!/usr/bin/env bash
-# Bastion-only helper: create toswitch1/toswitch2 Linux bridges for ocp.clab.yml
-# and optionally attach lab NICs. Does NOT change eth0 / default route.
-#
-# Typical layout (tagging often on the hypervisor; guest sees untagged NICs):
-#   leaf1 path → bastion eth1 → toswitch1 (leafkind1)
-#   leaf2 path → bastion eth2 → toswitch2 (leafkind2)
+# Bastion-only: create toswitch1/toswitch2 for ocp.clab.yml; optionally attach lab NICs.
+# Does not touch eth0 / default route. Requires passwordless sudo.
 #
 # Usage:
 #   set -a && source openshift/e2e/bastion.env.example && set +a
 #   ./openshift/e2e/setup-bastion-bridges.sh
-#
-# Safety:
-#   - Never adds a gateway on lab ifaces
-#   - Flushes addresses on lab ifaces before enslaving
-#   - Marks lab NICs NM-unmanaged (no SSH theft) without bouncing eth0
-#   - Does NOT nmcli-mod the live mgmt profile (that drops SSH)
-#   - Idempotent: skips work when already correct
-#   - No rollback: if attach fails after ensure_bridge, bridges stay (rerun is OK)
-#   - CLAB_BASTION_ATTACH_LAB_IFACE: only the literal "true" enables attach
-#   - Requires working passwordless (or cached) sudo
-#   - lab-* NM profiles created here are not removed by teardown-clab (intentional)
-# Override guest ifaces via CLAB_BASTION_LAB_IFACE_TOSWITCH1/2 (or aliases).
 set -euo pipefail
 
 MGMT_IFACE="${CLAB_BASTION_MGMT_IFACE:-eth0}"
