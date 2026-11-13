@@ -103,8 +103,9 @@ fi
 
 echo "=== Deploy clab topology ==="
 cd "${REPO_ROOT}"
-# Best-effort cleanup first (no --reconfigure).
-bash "${SCRIPT_DIR}/teardown-clab.sh" || true
+# Destroy any prior instance of this topo first (no --reconfigure).
+# teardown-clab exits 0 when the lab is already absent; real failures must surface.
+bash "${SCRIPT_DIR}/teardown-clab.sh"
 sudo "${CLAB_BIN}" deploy --runtime "${RUNTIME}" \
   --topo "${SCRIPT_DIR}/ocp.clab.yml"
 

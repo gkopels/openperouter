@@ -361,11 +361,12 @@ e2etests: ginkgo kubectl create-export-logs
 	$(GINKGO) -v $(GINKGO_ARGS) --json-report=e2e-report.json --output-dir=${KIND_EXPORT_LOGS} --timeout=3h ./e2etests/suite -- --kubectl=$(KUBECTL) $(TEST_ARGS) --reporterpath=${KIND_EXPORT_LOGS}
 
 .PHONY: e2e-bastion
-e2e-bastion: ## Bastion OCP lifecycle: bridges+clab → e2etests → teardown (not KIND make deploy). Set OPENPE_KUBECONFIG; source openshift/e2e/bastion.env.example (OPENPE_UNDERLAY_IFACE; docker default).
+e2e-bastion: ## Bastion OCP lifecycle: bridges+clab → e2etests → teardown (not KIND). Set OPENPE_KUBECONFIG OPENPE_UNDERLAY_IFACE OPENPE_UNDERLAY_IFACE2 (docker default; see openshift/e2e/README.md).
 	@if [ -z "$(OPENPE_KUBECONFIG)" ]; then \
 	  echo "ERROR: set OPENPE_KUBECONFIG=/path/to/ocp/kubeconfig" >&2; \
 	  echo "  (make exports KUBECONFIG=$(LOCALBIN)/kubeconfig for KIND; do not use that for bastion)" >&2; \
-	  echo "  also: set -a && source openshift/e2e/bastion.env.example && set +a  # OPENPE_UNDERLAY_IFACE, etc." >&2; \
+	  echo "  also set OPENPE_UNDERLAY_IFACE and OPENPE_UNDERLAY_IFACE2 (worker underlay NICs)" >&2; \
+	  echo "  example: make e2e-bastion OPENPE_KUBECONFIG=/path/to/kubeconfig OPENPE_UNDERLAY_IFACE=ens1f0.173 OPENPE_UNDERLAY_IFACE2=ens1f1.174" >&2; \
 	  exit 1; \
 	fi
 	@if [ ! -f "$(OPENPE_KUBECONFIG)" ]; then \
