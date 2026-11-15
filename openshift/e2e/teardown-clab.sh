@@ -45,9 +45,11 @@ assert_mgmt_default() {
 
 # Print: present | absent | unknown
 #
-# Verified absence only on inspect rc=0 plus a known empty-lab payload.
-# Non-zero rc (runtime/socket/exec errors) → unknown. Never treat generic
-# "not found" / "does not exist" substrings as absence.
+# Verified absence (containerlab):
+#   - rc=0 and empty JSON "{}" / "[]", or exact "no containers found"
+#   - rc!=0 and topology-list empty-lab error (v0.79+ after destroy):
+#       "Failed to list containers based on topology" + "containers not found"
+# Runtime/socket/exec failures stay unknown. Never match bare "not found".
 topo_inspect_status() {
   local out rc kind
   if [[ -z "${CLAB_BIN}" ]]; then
@@ -58,19 +60,15 @@ topo_inspect_status() {
   out="$(sudo "${CLAB_BIN}" inspect --runtime "${RUNTIME}" --topo "${TOPO}" --format json 2>&1)"
   rc=$?
   set -e
-  if [[ "${rc}" -ne 0 ]]; then
-    echo "ERROR: clab inspect failed (rc=${rc}); cannot confirm topology absence:" >&2
-    printf '%s\n' "${out}" >&2
-    echo "unknown"
-    return 0
-  fi
   # Heredoc (not python -c '...') so regex quotes cannot break Bash parsing.
   kind="$(
-    INSPECT_OUT="${out}" python3 - <<'PY'
+    INSPECT_RC="${rc}" INSPECT_OUT="${out}" python3 - <<'PY'
 import json, os, re, sys
 
+rc = int(os.environ.get("INSPECT_RC", "1"))
 raw = os.environ.get("INSPECT_OUT", "")
-# Newer containerlab: empty lab → "{}" / "[]" on stdout (possibly among log lines).
+
+# Prefer JSON when present (success or mixed with log lines).
 candidates = []
 for line in raw.splitlines():
     s = line.strip()
@@ -90,17 +88,30 @@ for cand in reversed(candidates):
         sys.exit(0)
     print("present")
     sys.exit(0)
-# Older containerlab: exit 0 and exact empty-lab line "no containers found"
-# (log.Println / log.Info). Do not substring-match bare "not found".
+
+# Older containerlab: exit 0 and exact empty-lab line "no containers found".
 for line in raw.splitlines():
     s = line.strip()
     if s == "no containers found":
         print("absent")
         sys.exit(0)
-    # logrus / similar: ... msg="no containers found"  OR  INFO[...] no containers found
     if re.search(r"(?:msg=)?[\"']?no containers found[\"']?\s*$", s):
         print("absent")
         sys.exit(0)
+
+# containerlab v0.79+ after destroy: inspect often exits non-zero with a
+# topology-scoped empty-lab error (not a runtime/socket failure).
+low = raw.lower()
+if (
+    "failed to list containers based on topology" in low
+    and "containers not found" in low
+):
+    print("absent")
+    sys.exit(0)
+
+if rc != 0:
+    print("unknown")
+    sys.exit(0)
 print("unknown")
 PY
   )"
@@ -109,7 +120,7 @@ PY
       echo "${kind}"
       ;;
     *)
-      echo "ERROR: clab inspect succeeded but did not return a verified empty/non-empty lab response:" >&2
+      echo "ERROR: clab inspect (rc=${rc}) did not return a verified empty/non-empty lab response:" >&2
       printf '%s\n' "${out}" >&2
       echo "unknown"
       ;;
