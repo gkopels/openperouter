@@ -52,12 +52,8 @@ echo "  nodelink=${NODELINK}"
 echo "  OPENPE_UNDERLAY_IFACE=${OPENPE_UNDERLAY_IFACE}"
 echo "  OPENPE_UNDERLAY_IFACE2=${OPENPE_UNDERLAY_IFACE2}"
 
-# Pipe a host script into the node netns (bash -s). -i forwards stdin; no TTY.
-run_host_script() {
-  local node=$1 script=$2
-  shift 2
-  oc debug "node/${node}" --quiet -i --tty=false -- chroot /host bash -s -- "$@" <"${script}"
-}
+# shellcheck source=./bastion-run-host-script.sh
+source "${SCRIPT_DIR}/bastion-run-host-script.sh"
 
 # Line-oriented state (no JSON / no Python):
 #   meta|<labelKey>|<iface1>|<iface2>

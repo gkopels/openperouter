@@ -26,7 +26,6 @@ HOST_REMOVE="${SCRIPT_DIR}/remove-underlay-vlan-on-host.sh"
 
 TEARDOWN="${OPENPE_E2E_TEARDOWN_WORKER_NET:-true}"
 IFACE_WAIT_SECS="${OPENPE_E2E_WORKER_NET_IFACE_WAIT_SECS:-60}"
-DEBUG_TIMEOUT="${OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT:-120s}"
 
 echo "=== teardown-bastion-worker-net ==="
 echo "  OPENPE_E2E_TEARDOWN_WORKER_NET=${TEARDOWN}"
@@ -50,12 +49,8 @@ if [[ ! -f "${HOST_REMOVE}" ]]; then
   exit 1
 fi
 
-# Pipe a host script into the node netns (bash -s). -i forwards stdin; no TTY.
-run_host_script() {
-  local node=$1 script=$2
-  shift 2
-  timeout "${DEBUG_TIMEOUT}" oc debug "node/${node}" --quiet -i --tty=false -- chroot /host bash -s -- "$@" <"${script}"
-}
+# shellcheck source=./bastion-run-host-script.sh
+source "${SCRIPT_DIR}/bastion-run-host-script.sh"
 
 mapfile -t FLUSH_LINES < "${STATE_FILE}"
 if [[ ${#FLUSH_LINES[@]} -eq 0 ]]; then
