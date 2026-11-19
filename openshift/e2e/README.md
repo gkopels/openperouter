@@ -9,9 +9,9 @@ Upstream KIND e2e stays under `clab/` + `e2etests/`.
 | --- | --- |
 | **KIND** | `make deploy` / `clab/singlecluster/kind.clab.yml` + `e2etests` |
 | **Virtual OCP / metal** | `deploy.sh` → `setup-clab.sh` + `run_tests.sh` (same as `kni/main`) |
-| **Bastion lab** | `make e2e-bastion` → `setup-clab-bastion.sh` + `run_tests-bastion.sh` |
+| **Bastion lab** | `./openshift/e2e/e2e-bastion.sh` → `setup-clab-bastion.sh` + `run_tests-bastion.sh` |
 
-Shared `setup-clab.sh` / `run_tests.sh` / `deploy_frrk8s.sh` stay on the main (virtual OCP) path and are unchanged from main behavior. Bastion uses dedicated wrappers.
+Shared `setup-clab.sh` / `run_tests.sh` / `deploy_frrk8s.sh` stay on the main (virtual OCP) path and are unchanged from main behavior. Bastion uses dedicated wrappers and a bash entrypoint (no Makefile target — Makefile stays aligned with upstream).
 
 ## Virtual OCP (dev-scripts)
 
@@ -34,26 +34,17 @@ Supply lab settings from the shell, a local wrapper, or CI. `bastion.env.example
 ### What you must provide
 
 ```bash
-make e2e-bastion \
-  OPENPE_KUBECONFIG=/path/to/ocp/kubeconfig \
-  OPENPE_UNDERLAY_IFACE=ens1f0.173 \
-  OPENPE_UNDERLAY_IFACE2=ens1f1.174
-```
-
-| Variable | Purpose |
-| --- | --- |
-| `OPENPE_KUBECONFIG` | OCP kubeconfig path (`make` passes it as `KUBECONFIG` into the scripts). |
-| `OPENPE_UNDERLAY_IFACE` | Worker underlay NIC for leaf 1 (tagged `parent.VID`). |
-| `OPENPE_UNDERLAY_IFACE2` | Worker underlay NIC for leaf 2 (tagged `parent.VID`). |
-
-Direct `./openshift/e2e/e2e-bastion.sh` uses **`KUBECONFIG`** in place of `OPENPE_KUBECONFIG`; the two underlay variables are unchanged:
-
-```bash
 export KUBECONFIG=/path/to/ocp/kubeconfig
 export OPENPE_UNDERLAY_IFACE=ens1f0.173
 export OPENPE_UNDERLAY_IFACE2=ens1f1.174
 ./openshift/e2e/e2e-bastion.sh
 ```
+
+| Variable | Purpose |
+| --- | --- |
+| `KUBECONFIG` | OCP kubeconfig path. |
+| `OPENPE_UNDERLAY_IFACE` | Worker underlay NIC for leaf 1 (tagged `parent.VID`). |
+| `OPENPE_UNDERLAY_IFACE2` | Worker underlay NIC for leaf 2 (tagged `parent.VID`). |
 
 ### Optional overrides (defaults)
 
@@ -86,16 +77,16 @@ CI or a wrapper only needs to pass the three values above unless it changes a de
 Docker remains the default. On a RHEL bastion that already runs Podman (e.g. disconnected registry), pass the three required values plus:
 
 ```bash
-make e2e-bastion \
-  OPENPE_KUBECONFIG=/path/to/ocp/kubeconfig \
-  OPENPE_UNDERLAY_IFACE=ens1f0.173 \
-  OPENPE_UNDERLAY_IFACE2=ens1f1.174 \
-  CLAB_RUNTIME=podman \
-  OPENPE_CLAB_RUNTIME=podman \
-  CONTAINER_RUNTIME=/absolute/path/to/openperouter/openshift/e2e/podman-root.sh
+export KUBECONFIG=/path/to/ocp/kubeconfig
+export OPENPE_UNDERLAY_IFACE=ens1f0.173
+export OPENPE_UNDERLAY_IFACE2=ens1f1.174
+export CLAB_RUNTIME=podman
+export OPENPE_CLAB_RUNTIME=podman
+export CONTAINER_RUNTIME=/absolute/path/to/openperouter/openshift/e2e/podman-root.sh
+./openshift/e2e/e2e-bastion.sh
 ```
 
-`CLAB_RUNTIME` / `OPENPE_CLAB_RUNTIME` select Podman for containerlab. `CONTAINER_RUNTIME` must be the **absolute** path to `openshift/e2e/podman-root.sh` so Ginkgo sees the same rootful peers that `sudo podman` created. A local wrapper outside the repo can export these and call `make e2e-bastion`.
+`CLAB_RUNTIME` / `OPENPE_CLAB_RUNTIME` select Podman for containerlab. `CONTAINER_RUNTIME` must be the **absolute** path to `openshift/e2e/podman-root.sh` so Ginkgo sees the same rootful peers that `sudo podman` created. A local wrapper outside the repo can export these and call `e2e-bastion.sh`.
 
 ### Lifecycle
 

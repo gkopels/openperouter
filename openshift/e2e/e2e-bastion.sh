@@ -9,7 +9,6 @@
 #   export KUBECONFIG=/path/to/ocp/kubeconfig
 #   set -a && source openshift/e2e/bastion.env.example && set +a
 #   ./openshift/e2e/e2e-bastion.sh
-#   # or: make e2e-bastion
 
 set -euo pipefail
 

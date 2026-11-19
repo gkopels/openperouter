@@ -103,7 +103,7 @@ case "${PHASE}" in
     sanity_check
     run_fabric
     echo "=== deploy-bastion complete ==="
-    echo "Next: make e2e-bastion  # or ./openshift/e2e/e2e-bastion.sh"
+    echo "Next: ./openshift/e2e/e2e-bastion.sh"
     echo "Standalone:"
     echo "  ./openshift/e2e/configure-bastion-worker-net.sh"
     echo "  ./openshift/e2e/run_tests-bastion.sh"
