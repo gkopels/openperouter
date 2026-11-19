@@ -10,21 +10,22 @@
 #   KUBECONFIG — required for oc (normally set by e2e-bastion / caller).
 #
 # Ownership-aware: removes only addresses / vlan links / labels this run added
-# (see worker-net.json createdLink / addedAddress / labeledByUs). No blanket
+# (see worker-net.state createdLink / addedAddress / labeledByUs). No blanket
 # IPv4 flush. Pre-existing VLANs and unrelated addresses are left alone.
 #
-# State: .e2e-bastion-state/worker-net.json. Kept on failure for retry.
+# State: .e2e-bastion-state/worker-net.state (line-oriented). Kept on failure.
+# Also accepts legacy worker-net.json only to print a clear migrate error.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${SCRIPT_DIR}/.e2e-bastion-state"
-STATE_FILE="${STATE_DIR}/worker-net.json"
+STATE_FILE="${STATE_DIR}/worker-net.state"
+LEGACY_JSON="${STATE_DIR}/worker-net.json"
 
 TEARDOWN="${OPENPE_E2E_TEARDOWN_WORKER_NET:-true}"
 IFACE_WAIT_SECS="${OPENPE_E2E_WORKER_NET_IFACE_WAIT_SECS:-60}"
 DEBUG_TIMEOUT="${OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT:-120s}"
-LABEL_KEY_DEFAULT="e2e.openperouter.io/underlay"
 
 echo "=== teardown-bastion-worker-net ==="
 echo "  OPENPE_E2E_TEARDOWN_WORKER_NET=${TEARDOWN}"
@@ -35,59 +36,38 @@ if [[ "${TEARDOWN}" == "false" ]]; then
 fi
 
 if [[ ! -f "${STATE_FILE}" ]]; then
+  if [[ -f "${LEGACY_JSON}" ]]; then
+    echo "ERROR: found legacy ${LEGACY_JSON}; re-run configure-bastion-worker-net.sh to refresh state as worker-net.state" >&2
+    exit 1
+  fi
   echo "No state at ${STATE_FILE}; nothing to remove"
   exit 0
 fi
 
-# Host access via oc debug only (no controller/nsenter fallback).
+# Host access via oc debug only.
 node_exec() {
   local node=$1; shift
   timeout "${DEBUG_TIMEOUT}" oc debug "node/${node}" --quiet -- chroot /host "$@"
 }
 
-set +e
-FLUSH_TXT="$(python3 - <<PY
-import json, sys
-with open("${STATE_FILE}") as f:
-    cfg = json.load(f)
-entries = cfg.get("entries") or []
-label_key = cfg.get("labelKey") or "${LABEL_KEY_DEFAULT}"
-labels = cfg.get("labels") or []
-if not entries and not labels:
-    sys.exit(2)
-for e in entries:
-    created = "1" if e.get("createdLink") else "0"
-    added = "1" if e.get("addedAddress") else "0"
-    print(f"addr|{e['node']}|{e['iface']}|{e['ip']}|{e.get('prefix', 24)}|{created}|{added}")
-for lab in labels:
-    owned = "1" if lab.get("labeledByUs") else "0"
-    prior = lab.get("priorValue")
-    prior_s = "" if prior is None else str(prior)
-    print(f"label|{lab['node']}|{label_key}|{owned}|{prior_s}")
-PY
-)"
-PARSE_RC=$?
-set -e
-if [[ "${PARSE_RC}" -eq 2 ]]; then
-  echo "ERROR: ${STATE_FILE} has no entries — keeping file for inspection" >&2
-  exit 1
-fi
-if [[ "${PARSE_RC}" -ne 0 ]]; then
-  echo "ERROR: failed to parse ${STATE_FILE}" >&2
-  exit 1
-fi
-mapfile -t FLUSH_LINES <<<"${FLUSH_TXT}"
-if [[ ${#FLUSH_LINES[@]} -eq 0 || -z "${FLUSH_LINES[0]:-}" ]]; then
-  echo "ERROR: ${STATE_FILE} produced no teardown lines — keeping file" >&2
+mapfile -t FLUSH_LINES < "${STATE_FILE}"
+if [[ ${#FLUSH_LINES[@]} -eq 0 ]]; then
+  echo "ERROR: ${STATE_FILE} is empty — keeping file" >&2
   exit 1
 fi
 
 FAILED=0
+HAVE_WORK=0
 for line in "${FLUSH_LINES[@]}"; do
+  [[ -z "${line}" || "${line}" == \#* ]] && continue
   IFS='|' read -r kind rest <<<"${line}"
   case "${kind}" in
+    meta)
+      continue
+      ;;
     addr)
       IFS='|' read -r node iface ip plen created_link added_address <<<"${rest}"
+      HAVE_WORK=1
       echo "  addr ${node}: ${iface} ${ip}/${plen} (createdLink=${created_link} addedAddress=${added_address})"
       if [[ "${added_address}" != "1" && "${created_link}" != "1" ]]; then
         echo "  skip ${node}/${iface}: nothing owned by this run"
@@ -138,6 +118,7 @@ for line in "${FLUSH_LINES[@]}"; do
       ;;
     label)
       IFS='|' read -r node label_key owned prior <<<"${rest}"
+      HAVE_WORK=1
       if [[ "${owned}" != "1" ]]; then
         echo "  label ${node}: ${label_key} pre-existed; leaving"
         continue
@@ -154,6 +135,11 @@ for line in "${FLUSH_LINES[@]}"; do
       ;;
   esac
 done
+
+if [[ "${HAVE_WORK}" -eq 0 ]]; then
+  echo "ERROR: ${STATE_FILE} has no addr/label entries — keeping file" >&2
+  exit 1
+fi
 
 if [[ "${FAILED}" -eq 0 ]]; then
   rm -f "${STATE_FILE}"
