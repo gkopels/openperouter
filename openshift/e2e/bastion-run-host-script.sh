@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
-# Shared helper: pipe a host script into a worker host netns via oc debug.
-# Sourced by configure-bastion-worker-net.sh and teardown-bastion-worker-net.sh.
-#
-# Usage:
-#   # shellcheck source=./bastion-run-host-script.sh
-#   source "${SCRIPT_DIR}/bastion-run-host-script.sh"
-#   run_host_script <node> <script> [args...]
-#
-# Env:
-#   OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT — timeout(1) for oc debug (default: 120s).
-#
+# Shared oc-debug helper for bastion worker-net (configure + teardown).
+# Usage: run_host_script <node> <script> [args...]
+# OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT defaults to 120s.
 run_host_script() {
   local node=$1 script=$2
   local debug_timeout="${OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT:-120s}"
