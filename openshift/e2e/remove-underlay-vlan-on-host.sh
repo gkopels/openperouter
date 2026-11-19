@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Run on the worker host netns (via oc debug … chroot /host bash -s).
-# Usage: remove-underlay-vlan-on-host.sh <iface> <ip> <plen> <createdLink 0|1> <addedAddress 0|1> <wait_secs>
+# Bastion host helper: remove underlay VLAN / IPv4 this e2e run owns.
+# Intended to run in the worker host netns via:
+#   oc debug node/<node> --quiet -i --tty=false -- chroot /host bash -s -- <args>
+# Waits up to wait_secs for the iface to return to the host netns after Underlay
+# CR cleanup. Deletes addr and/or link only when createdLink / addedAddress is 1.
 #
-# Ownership-aware: deletes the planned IPv4 and/or VLAN link only when this run
-# created them. Waits up to wait_secs for the iface to reappear in the host netns
-# after Underlay CR cleanup.
+# Usage:
+#   ./openshift/e2e/remove-underlay-vlan-on-host.sh <iface> <ip> <plen> <createdLink 0|1> <addedAddress 0|1> <wait_secs>
 #
 set -euo pipefail
 

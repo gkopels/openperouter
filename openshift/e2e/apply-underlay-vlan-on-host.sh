@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Run on the worker host netns (via oc debug … chroot /host bash -s).
-# Usage: apply-underlay-vlan-on-host.sh <parent> <iface> <vid> <ip/plen>
+# Bastion host helper: validate parent NIC, then clean+create underlay VLAN + IPv4.
+# Intended to run in the worker host netns via:
+#   oc debug node/<node> --quiet -i --tty=false -- chroot /host bash -s -- <args>
+# Does not mutate the parent (must be UP, unmanaged, no IPv4).
 #
-# Checks parent is usable (exists, UP, no IPv4, NM unmanaged), then clean+create
-# the VLAN iface and adds the planned IPv4. Does not mutate the parent.
+# Usage:
+#   ./openshift/e2e/apply-underlay-vlan-on-host.sh <parent> <iface> <vid> <ip/plen>
 #
 set -euo pipefail
 
