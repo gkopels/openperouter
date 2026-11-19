@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${SCRIPT_DIR}/.e2e-bastion-state"
 STATE_FILE="${STATE_DIR}/worker-net.state"
 LEGACY_JSON="${STATE_DIR}/worker-net.json"
+HOST_REMOVE="${SCRIPT_DIR}/remove-underlay-vlan-on-host.sh"
 
 TEARDOWN="${OPENPE_E2E_TEARDOWN_WORKER_NET:-true}"
 IFACE_WAIT_SECS="${OPENPE_E2E_WORKER_NET_IFACE_WAIT_SECS:-60}"
@@ -44,10 +45,16 @@ if [[ ! -f "${STATE_FILE}" ]]; then
   exit 0
 fi
 
-# Host access via oc debug only.
-node_exec() {
-  local node=$1; shift
-  timeout "${DEBUG_TIMEOUT}" oc debug "node/${node}" --quiet -- chroot /host "$@"
+if [[ ! -f "${HOST_REMOVE}" ]]; then
+  echo "ERROR: missing host script ${HOST_REMOVE}" >&2
+  exit 1
+fi
+
+# Pipe a host script into the node netns (bash -s). -i forwards stdin; no TTY.
+run_host_script() {
+  local node=$1 script=$2
+  shift 2
+  timeout "${DEBUG_TIMEOUT}" oc debug "node/${node}" --quiet -i --tty=false -- chroot /host bash -s -- "$@" <"${script}"
 }
 
 mapfile -t FLUSH_LINES < "${STATE_FILE}"
@@ -73,45 +80,8 @@ for line in "${FLUSH_LINES[@]}"; do
         echo "  skip ${node}/${iface}: nothing owned by this run"
         continue
       fi
-      if ! node_exec "${node}" bash -c "
-        set -e
-        iface='${iface}'
-        ip='${ip}'
-        plen='${plen}'
-        created_link='${created_link}'
-        added_address='${added_address}'
-        planned=\"\${ip}/\${plen}\"
-        deadline=\$((SECONDS + ${IFACE_WAIT_SECS}))
-        while (( SECONDS < deadline )); do
-          if ip link show \"\${iface}\" >/dev/null 2>&1; then
-            break
-          fi
-          sleep 2
-        done
-        if ! ip link show \"\${iface}\" >/dev/null 2>&1; then
-          echo \"  \${iface} already absent on host; skipping\"
-          exit 0
-        fi
-        if [[ \"\${added_address}\" == \"1\" ]]; then
-          if ip -4 -o addr show dev \"\${iface}\" | awk '{print \$4}' | grep -qxF \"\${planned}\"; then
-            ip -4 addr del \"\${planned}\" dev \"\${iface}\"
-          fi
-          if ip -4 -o addr show dev \"\${iface}\" | awk '{print \$4}' | grep -qxF \"\${planned}\"; then
-            echo \"ERROR: \${planned} still present on \${iface}\" >&2
-            exit 1
-          fi
-        fi
-        if [[ \"\${created_link}\" == \"1\" ]]; then
-          echo \"  removing vlan link \${iface} (created by this run)\"
-          ip link del \"\${iface}\"
-          if ip link show \"\${iface}\" >/dev/null 2>&1; then
-            echo \"ERROR: \${iface} still present after ip link del\" >&2
-            exit 1
-          fi
-        else
-          ip -br addr show \"\${iface}\" 2>/dev/null || true
-        fi
-      "; then
+      if ! run_host_script "${node}" "${HOST_REMOVE}" \
+        "${iface}" "${ip}" "${plen}" "${created_link}" "${added_address}" "${IFACE_WAIT_SECS}"; then
         echo "ERROR: teardown failed on ${node}/${iface}" >&2
         FAILED=1
       fi
