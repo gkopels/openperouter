@@ -50,15 +50,20 @@ for iface in "${CLAB_BASTION_LAB_IFACE_TOSWITCH1:-eth1}" "${CLAB_BASTION_LAB_IFA
   fi
 done
 
-if ! command -v containerlab >/dev/null 2>&1 && ! command -v clab >/dev/null 2>&1; then
-  echo "containerlab not found; installing it"
+# get.containerlab.dev installs here (BIN_INSTALL_DIR=/usr/bin, BINARY_NAME=containerlab).
+CLAB_BIN="${CLAB_BIN:-/usr/bin/containerlab}"
+if [[ ! -x "${CLAB_BIN}" ]]; then
+  echo "${CLAB_BIN} not found; installing containerlab"
   command -v curl >/dev/null 2>&1 || {
     echo "curl is required to install containerlab" >&2
     exit 1
   }
   bash -c "$(curl -fsSL https://get.containerlab.dev)"
+  if [[ ! -x "${CLAB_BIN}" ]]; then
+    echo "ERROR: containerlab install did not produce ${CLAB_BIN}" >&2
+    exit 1
+  fi
 fi
-CLAB_BIN="$(command -v containerlab || command -v clab)"
 
 echo "=== Generate peerLeaf FRR configs ==="
 cd "${REPO_ROOT}/clab/tools"

@@ -21,13 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOPO="${SCRIPT_DIR}/ocp.clab.yml"
 RUNTIME="${CLAB_RUNTIME:-${OPENPE_CLAB_RUNTIME:-docker}}"
 MGMT_IFACE="${CLAB_BASTION_MGMT_IFACE:-eth0}"
-
-CLAB_BIN=""
-if command -v clab >/dev/null 2>&1; then
-  CLAB_BIN=clab
-elif command -v containerlab >/dev/null 2>&1; then
-  CLAB_BIN=containerlab
-fi
+# get.containerlab.dev installs here (BIN_INSTALL_DIR=/usr/bin, BINARY_NAME=containerlab).
+CLAB_BIN="${CLAB_BIN:-/usr/bin/containerlab}"
 
 assert_mgmt_default() {
   local def
@@ -52,7 +47,7 @@ assert_mgmt_default() {
 # Runtime/socket/exec failures stay unknown. Never match bare "not found".
 topo_inspect_status() {
   local out rc kind
-  if [[ -z "${CLAB_BIN}" ]]; then
+  if [[ ! -x "${CLAB_BIN}" ]]; then
     echo "unknown"
     return 0
   fi
@@ -143,8 +138,8 @@ fi
 
 assert_mgmt_default
 
-if [[ -z "${CLAB_BIN}" ]]; then
-  echo "ERROR: clab/containerlab not found; cannot destroy ${TOPO}" >&2
+if [[ ! -x "${CLAB_BIN}" ]]; then
+  echo "ERROR: ${CLAB_BIN} not found or not executable; cannot destroy ${TOPO}" >&2
   exit 1
 fi
 
