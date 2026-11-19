@@ -11,16 +11,10 @@ join() {
 
 echo "=== Run e2e tests ==="
 
-pushd "$SCRIPT_DIR"/../..
+# shellcheck source=./e2e-test-excludes.sh
+source "${SCRIPT_DIR}/e2e-test-excludes.sh"
 
-# The following lists tests that are (currently) incompatible with the
-# downstream setup.
-EXCLUDE_ARRAY=(
-  'Routes.between.bgp.and.the.fabric.underlay.address.family.Unnumbered'
-  'DHCP.underlay.lifecycle.removes.the.DHCP.interfaces.when.the.underlay.is.deleted'
-  'reflects.type-2.routes.between.client.nodes.via.the.route.reflector'
-  'assigns.each.underlay.port.a.unique.IPv6.link-local'
-)
+pushd "$SCRIPT_DIR"/../..
 
 SKIP="$(join '|' "${EXCLUDE_ARRAY[@]}")"
 

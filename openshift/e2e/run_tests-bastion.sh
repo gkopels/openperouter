@@ -38,13 +38,8 @@ if [[ ! -f "${NODELINK}" ]]; then
   exit 1
 fi
 
-# Same excludes as openshift/e2e/run_tests.sh (main / virtual OCP).
-EXCLUDE_ARRAY=(
-  'Routes.between.bgp.and.the.fabric.underlay.address.family.Unnumbered'
-  'DHCP.underlay.lifecycle.removes.the.DHCP.interfaces.when.the.underlay.is.deleted'
-  'reflects.type-2.routes.between.client.nodes.via.the.route.reflector'
-  'assigns.each.underlay.port.a.unique.IPv6.link-local'
-)
+# shellcheck source=./e2e-test-excludes.sh
+source "${SCRIPT_DIR}/e2e-test-excludes.sh"
 SKIP="$(join '|' "${EXCLUDE_ARRAY[@]}")"
 if [[ -n "${OPENPE_E2E_SKIP:-}" ]]; then
   extra="${OPENPE_E2E_SKIP//|/ }"
