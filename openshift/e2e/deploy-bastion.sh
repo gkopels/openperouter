@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
-# Bastion bring-up: require Ready FRR-K8s, bridges, then setup-clab-bastion.sh.
-# Does NOT run KIND (make deploy). OpenPE and FRR-K8s must already be installed
-# (CI or lab provisions CNO FRR; this script only waits for readiness).
-#
-# Namespaces/selectors match the shared VM path (run_tests.sh / deploy_openperouter.sh):
-#   openshift-openperouter, openshift-frr-k8s, app=frr-k8s
-#
-# OPENPE_E2E_BASTION_PHASE:
-#   all      — prereqs + fabric (default; standalone deploy-bastion)
-#   prereqs  — OpenPE + FRR-K8s checks only (no bridges/clab)
-#   fabric   — bridges + setup-clab-bastion only (caller already checked prereqs)
+# Bastion bring-up: sanity_check → bridges → setup-clab-bastion.
+# OPENPE_E2E_BASTION_PHASE=all|prereqs|fabric (default: all).
 #
 # Usage:
 #   export KUBECONFIG=/path/to/ocp/kubeconfig

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Bastion-only: create toswitch1/toswitch2 for ocp.clab.yml; optionally attach lab NICs.
-# Does not touch eth0 / default route. Requires passwordless sudo.
+# Create toswitch1/toswitch2 bridges; optionally attach lab NICs. Requires passwordless sudo.
 #
 # Usage:
 #   set -a && source openshift/e2e/bastion.env.example && set +a
@@ -10,7 +9,6 @@ set -euo pipefail
 MGMT_IFACE="${CLAB_BASTION_MGMT_IFACE:-eth0}"
 IFACE_TS1="${CLAB_BASTION_LAB_IFACE_TOSWITCH1:-${CLAB_BASTION_LAB_IFACE:-${OPENPE_BASTION_LAB_IFACE:-eth1}}}"
 IFACE_TS2="${CLAB_BASTION_LAB_IFACE_TOSWITCH2:-eth2}"
-# Only the literal string "true" enables attach (any other value = bridges only).
 ATTACH_LAB="${CLAB_BASTION_ATTACH_LAB_IFACE:-${OPENPE_BASTION_ATTACH_LAB_IFACE:-true}}"
 
 echo "=== Bastion bridges for ocp.clab.yml ==="
