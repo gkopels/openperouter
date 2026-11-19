@@ -22,8 +22,7 @@ join() {
 }
 
 RUNTIME="${CONTAINER_RUNTIME:-${OPENPE_CLAB_RUNTIME:-${CLAB_RUNTIME:-docker}}}"
-OPENPE_NS="${OPENPE_E2E_NAMESPACE:-openshift-openperouter}"
-FRRK8S_NAMESPACE="${FRRK8S_NAMESPACE:-openshift-frr-k8s}"
+# Namespaces match shared VM run_tests.sh (not env-overridable).
 INSTRUMENTED_NODES_LABEL="${OPENPE_E2E_NODE_SELECTOR:-node-role.kubernetes.io/worker}"
 
 if [[ -z "${KUBECONFIG:-}" ]]; then
@@ -76,16 +75,10 @@ if [ "${OPENPEROUTER_DATAPATH:-}" == "grout" ]; then
   GROUT_GINKGO_ARGS="--label-filter='grout-support || grout-only'"
 fi
 
-TEST_ARGS="--nodelink-config=${NODELINK} \
-  --frrk8s-namespace=${FRRK8S_NAMESPACE} \
-  --openperouter-namespace=${OPENPE_NS} \
-  --instrumented-nodes-label=${INSTRUMENTED_NODES_LABEL} \
-  ${GROUT_TEST_ARGS}"
-
 echo "=== Run bastion e2e tests ==="
 echo "  CONTAINER_RUNTIME=${RUNTIME} KUBECONFIG=${KUBECONFIG}"
-echo "  openperouter-namespace=${OPENPE_NS}"
-echo "  frrk8s-namespace=${FRRK8S_NAMESPACE}"
+echo "  openperouter-namespace=openshift-openperouter"
+echo "  frrk8s-namespace=openshift-frr-k8s"
 echo "  nodelink=${NODELINK}"
 echo "  instrumented-nodes-label=${INSTRUMENTED_NODES_LABEL}"
 echo "  focus=${OPENPE_E2E_FOCUS:-}"
@@ -93,8 +86,13 @@ echo "  skip=${SKIP}"
 
 pushd "$SCRIPT_DIR"/../..
 
+# Namespace flags match openshift/e2e/run_tests.sh (VM / metal).
 CONTAINER_RUNTIME="${RUNTIME}" make e2etests \
-  TEST_ARGS="${TEST_ARGS}" \
+  TEST_ARGS="--nodelink-config=${NODELINK} \
+    --frrk8s-namespace=openshift-frr-k8s \
+    --openperouter-namespace=openshift-openperouter \
+    --instrumented-nodes-label=${INSTRUMENTED_NODES_LABEL} \
+    ${GROUT_TEST_ARGS}" \
   KUBECONFIG_PATH="${KUBECONFIG}" \
   GINKGO_ARGS="--junit-report=junit_e2e.xml \
     --label-filter=\!'systemdmode' \

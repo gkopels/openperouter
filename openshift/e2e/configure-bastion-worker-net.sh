@@ -25,15 +25,13 @@ STATE_DIR="${SCRIPT_DIR}/.e2e-bastion-state"
 STATE_FILE="${STATE_DIR}/worker-net.json"
 LABEL_KEY="e2e.openperouter.io/underlay"
 
-OPENPE_NS="${OPENPE_E2E_NAMESPACE:-openshift-openperouter}"
-
 if [[ ! -f "${NODELINK}" ]]; then
   echo "ERROR: ${NODELINK} missing — run setup-clab-bastion.sh / deploy-bastion first" >&2
   exit 1
 fi
 
-if ! oc get ns "${OPENPE_NS}" >/dev/null 2>&1; then
-  echo "ERROR: OpenPE namespace ${OPENPE_NS} not found" >&2
+if ! oc get ns openshift-openperouter >/dev/null 2>&1; then
+  echo "ERROR: OpenPE namespace openshift-openperouter not found" >&2
   exit 1
 fi
 
@@ -44,7 +42,7 @@ if [[ -z "${OPENPE_UNDERLAY_IFACE:-}" || -z "${OPENPE_UNDERLAY_IFACE2:-}" ]]; th
 fi
 
 echo "=== configure-bastion-worker-net ==="
-echo "  namespace=${OPENPE_NS}"
+echo "  namespace=openshift-openperouter"
 echo "  nodelink=${NODELINK}"
 echo "  OPENPE_UNDERLAY_IFACE=${OPENPE_UNDERLAY_IFACE}"
 echo "  OPENPE_UNDERLAY_IFACE2=${OPENPE_UNDERLAY_IFACE2}"
@@ -58,14 +56,14 @@ node_exec_ro() {
   fi
   echo "WARNING: oc debug failed on ${node}; trying controller nsenter (read-only)" >&2
   local pod
-  pod=$(oc get pods -n "${OPENPE_NS}" -l app=controller \
+  pod=$(oc get pods -n openshift-openperouter -l app=controller \
     --field-selector "spec.nodeName=${node}" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   if [[ -z "${pod}" ]]; then
-    echo "ERROR: no controller on ${node} in ${OPENPE_NS}; cannot probe" >&2
+    echo "ERROR: no controller on ${node} in openshift-openperouter; cannot probe" >&2
     return 1
   fi
-  oc exec -n "${OPENPE_NS}" "${pod}" -- nsenter -t 1 -m -u -i -n "$@"
+  oc exec -n openshift-openperouter "${pod}" -- nsenter -t 1 -m -u -i -n "$@"
 }
 
 node_exec_rw() {

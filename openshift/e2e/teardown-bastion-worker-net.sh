@@ -7,8 +7,8 @@
 #   OPENPE_E2E_WORKER_NET_IFACE_WAIT_SECS — seconds to wait for the NIC to
 #     return to the host netns after Underlay CR cleanup (default: 60).
 #   OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT — timeout(1) for oc debug (default: 120s).
-#   OPENPE_E2E_NAMESPACE — OpenPE NS for controller nsenter fallback.
 #   KUBECONFIG — required for oc (normally set by e2e-bastion / caller).
+# Controller nsenter fallback uses openshift-openperouter (same as VM path).
 #
 # Ownership-aware: removes only addresses / vlan links / labels this run added
 # (see worker-net.json createdLink / addedAddress / labeledByUs). No blanket
@@ -22,7 +22,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${SCRIPT_DIR}/.e2e-bastion-state"
 STATE_FILE="${STATE_DIR}/worker-net.json"
 
-OPENPE_NS="${OPENPE_E2E_NAMESPACE:-openshift-openperouter}"
 TEARDOWN="${OPENPE_E2E_TEARDOWN_WORKER_NET:-true}"
 IFACE_WAIT_SECS="${OPENPE_E2E_WORKER_NET_IFACE_WAIT_SECS:-60}"
 DEBUG_TIMEOUT="${OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT:-120s}"
@@ -48,14 +47,14 @@ node_exec() {
   fi
   echo "WARNING: oc debug failed on ${node}; trying controller nsenter" >&2
   local pod
-  pod=$(oc get pods -n "${OPENPE_NS}" -l app=controller \
+  pod=$(oc get pods -n openshift-openperouter -l app=controller \
     --field-selector "spec.nodeName=${node}" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   if [[ -z "${pod}" ]]; then
-    echo "ERROR: no controller on ${node} in ${OPENPE_NS}; cannot remove underlay IP" >&2
+    echo "ERROR: no controller on ${node} in openshift-openperouter; cannot remove underlay IP" >&2
     return 1
   fi
-  oc exec -n "${OPENPE_NS}" "${pod}" -- nsenter -t 1 -m -u -i -n "$@"
+  oc exec -n openshift-openperouter "${pod}" -- nsenter -t 1 -m -u -i -n "$@"
 }
 
 set +e

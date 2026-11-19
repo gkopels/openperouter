@@ -72,10 +72,6 @@ CI or a wrapper only needs to pass the three values above unless it changes a de
 | `CONTAINER_RUNTIME` | follows `OPENPE_CLAB_RUNTIME` / `CLAB_RUNTIME` / `docker` | Runtime binary (or wrapper) passed to Ginkgo e2etests. |
 | `CLAB_EXECUTOR` | `local` | `local` runs clab on this host; remote bastion SSH vars are unused when `local`. |
 | `OPENPE_BASTION_SKIP_SRV6_SETUP` | `true` | Skip leafSRV6 / hostSRV6_* setup on bastion. |
-| `OPENPE_E2E_NAMESPACE` | `openshift-openperouter` | OpenPE namespace for prereqs and tests. |
-| `FRRK8S_NAMESPACE` | `openshift-frr-k8s` | FRR-K8s namespace (prerequisite wait). |
-| `FRRK8S_SELECTOR` | `app=frr-k8s` | Pod label selector for readiness. |
-| `FRRK8S_TIMEOUT` | `5m` | Wait timeout for FRR-K8s create/Ready. |
 | `OPENPE_E2E_BASTION_PHASE` | `all` | `all` \| `prereqs` \| `fabric` for `deploy-bastion.sh`. |
 | `OPENPE_E2E_FOCUS` | unset (full suite) | Ginkgo `--focus` (e.g. `Single.Session.Baseline`). |
 | `OPENPE_E2E_SKIP` | unset (+ built-in excludes) | Extra Ginkgo `--skip` patterns. |
