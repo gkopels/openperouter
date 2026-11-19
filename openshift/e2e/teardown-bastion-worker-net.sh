@@ -8,7 +8,6 @@
 #     return to the host netns after Underlay CR cleanup (default: 60).
 #   OPENPE_E2E_WORKER_NET_DEBUG_TIMEOUT — timeout(1) for oc debug (default: 120s).
 #   KUBECONFIG — required for oc (normally set by e2e-bastion / caller).
-# Controller nsenter fallback uses openshift-openperouter (same as VM path).
 #
 # Ownership-aware: removes only addresses / vlan links / labels this run added
 # (see worker-net.json createdLink / addedAddress / labeledByUs). No blanket
@@ -40,21 +39,10 @@ if [[ ! -f "${STATE_FILE}" ]]; then
   exit 0
 fi
 
+# Host access via oc debug only (no controller/nsenter fallback).
 node_exec() {
   local node=$1; shift
-  if timeout "${DEBUG_TIMEOUT}" oc debug "node/${node}" --quiet -- chroot /host "$@" ; then
-    return 0
-  fi
-  echo "WARNING: oc debug failed on ${node}; trying controller nsenter" >&2
-  local pod
-  pod=$(oc get pods -n openshift-openperouter -l app=controller \
-    --field-selector "spec.nodeName=${node}" \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  if [[ -z "${pod}" ]]; then
-    echo "ERROR: no controller on ${node} in openshift-openperouter; cannot remove underlay IP" >&2
-    return 1
-  fi
-  oc exec -n openshift-openperouter "${pod}" -- nsenter -t 1 -m -u -i -n "$@"
+  timeout "${DEBUG_TIMEOUT}" oc debug "node/${node}" --quiet -- chroot /host "$@"
 }
 
 set +e

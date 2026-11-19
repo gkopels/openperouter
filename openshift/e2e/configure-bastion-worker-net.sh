@@ -47,32 +47,10 @@ echo "  nodelink=${NODELINK}"
 echo "  OPENPE_UNDERLAY_IFACE=${OPENPE_UNDERLAY_IFACE}"
 echo "  OPENPE_UNDERLAY_IFACE2=${OPENPE_UNDERLAY_IFACE2}"
 
-# Read-only and mutating helpers. Mutating calls do not fall back after a failed
-# oc debug (avoids re-running a partial mutation via nsenter).
-node_exec_ro() {
+# Host access via oc debug only (no controller/nsenter fallback).
+node_exec() {
   local node=$1; shift
-  if oc debug "node/${node}" --quiet -- chroot /host "$@" ; then
-    return 0
-  fi
-  echo "WARNING: oc debug failed on ${node}; trying controller nsenter (read-only)" >&2
-  local pod
-  pod=$(oc get pods -n openshift-openperouter -l app=controller \
-    --field-selector "spec.nodeName=${node}" \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  if [[ -z "${pod}" ]]; then
-    echo "ERROR: no controller on ${node} in openshift-openperouter; cannot probe" >&2
-    return 1
-  fi
-  oc exec -n openshift-openperouter "${pod}" -- nsenter -t 1 -m -u -i -n "$@"
-}
-
-node_exec_rw() {
-  local node=$1; shift
-  if oc debug "node/${node}" --quiet -- chroot /host "$@" ; then
-    return 0
-  fi
-  echo "ERROR: oc debug failed on ${node} during mutation; not retrying via nsenter (avoids duplicate mutate)" >&2
-  return 1
+  oc debug "node/${node}" --quiet -- chroot /host "$@"
 }
 
 write_state() {
@@ -180,7 +158,7 @@ for line in "${APPLY_LINES[@]}"; do
   esac
 
   # --- Probe parent + iface (read-only; fallback allowed) ---
-  PROBE_OUT="$(node_exec_ro "${node}" bash -c "
+  PROBE_OUT="$(node_exec "${node}" bash -c "
     set -euo pipefail
     parent='${parent}'
     iface='${iface}'
@@ -239,12 +217,12 @@ for line in "${APPLY_LINES[@]}"; do
   has_planned="${has_planned:-0}"
   printf '%s\n' "${PROBE_OUT}" | grep -vE '^(IFACE_EXISTS|HAS_PLANNED)=' || true
 
-  # --- Create VLAN if missing (mutate; no nsenter fallback) ---
+  # --- Create VLAN if missing ---
   # Split: record after successful ip link add, then bring the link up separately
   # so a failed "ip link set ... up" still leaves createdLink for teardown.
   if [[ "${iface_exists}" -eq 0 ]]; then
     echo "  creating vlan ${iface} on ${parent} id ${vid}"
-    VLAN_OUT="$(node_exec_rw "${node}" bash -c "
+    VLAN_OUT="$(node_exec "${node}" bash -c "
       set -euo pipefail
       parent='${parent}'
       iface='${iface}'
@@ -265,7 +243,7 @@ for line in "${APPLY_LINES[@]}"; do
     append_entry "${node}" "${iface}" "${ip}" "${plen}" "${created_link}" 0
     if [[ "${created_link}" -eq 1 ]]; then
       echo "  bringing up vlan ${iface}"
-      node_exec_rw "${node}" bash -c "
+      node_exec "${node}" bash -c "
         set -euo pipefail
         iface='${iface}'
         ip link set \"\${iface}\" up
@@ -279,12 +257,12 @@ for line in "${APPLY_LINES[@]}"; do
     append_entry "${node}" "${iface}" "${ip}" "${plen}" 0 0
   fi
 
-  # --- Add address if missing (mutate; no nsenter fallback) ---
+  # --- Add address if missing ---
   # Split: record after successful ip addr add, then confirm separately so a
   # failed follow-up query still leaves addedAddress for teardown.
   if [[ "${has_planned}" -eq 0 ]]; then
     echo "  adding ${planned} on ${iface}"
-    ADDR_OUT="$(node_exec_rw "${node}" bash -c "
+    ADDR_OUT="$(node_exec "${node}" bash -c "
       set -euo pipefail
       iface='${iface}'
       planned='${planned}'
@@ -321,7 +299,7 @@ for line in "${APPLY_LINES[@]}"; do
     append_entry "${node}" "${iface}" "${ip}" "${plen}" "${created_link}" "${added_address}"
     if [[ "${added_address}" -eq 1 ]]; then
       echo "  confirming ${planned} on ${iface}"
-      node_exec_rw "${node}" bash -c "
+      node_exec "${node}" bash -c "
         set -euo pipefail
         iface='${iface}'
         planned='${planned}'
