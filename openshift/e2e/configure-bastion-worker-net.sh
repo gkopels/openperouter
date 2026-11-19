@@ -94,15 +94,12 @@ append_entry() {
   write_state
 }
 
-# iface must be parent.VID (e.g. ens1f0.177). Sets parent + vid via namerefs.
+# iface must be parent.VID (e.g. ens1f0.177). Prints "parent vid" on stdout.
 parse_vlan_iface() {
   local iface="$1"
-  local -n _parent="$2"
-  local -n _vid="$3"
   case "${iface}" in
     *.[0-9]*)
-      _parent="${iface%.*}"
-      _vid="${iface##*.}"
+      printf '%s %s\n' "${iface%.*}" "${iface##*.}"
       ;;
     *)
       echo "ERROR: underlay iface ${iface} must be parent.VID (vlan)" >&2
@@ -150,7 +147,7 @@ apply_underlay_clean_create() {
   local node="$1" iface="$2" ip="$3" plen="$4"
   local parent="" vid="" planned="${ip}/${plen}"
 
-  parse_vlan_iface "${iface}" parent vid
+  read -r parent vid < <(parse_vlan_iface "${iface}")
 
   echo "  ${node}: clean+create ${iface}=${planned} (parent ${parent} vid ${vid})"
   check_parent_ready "${node}" "${parent}" "${iface}"
