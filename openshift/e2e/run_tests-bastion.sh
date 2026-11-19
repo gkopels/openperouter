@@ -40,16 +40,10 @@ if [[ -n "${OPENPE_E2E_SKIP:-}" ]]; then
   done
 fi
 
-# Split "a|b|c" or "a b c" into repeated --focus flags (ORed by Ginkgo).
+# Pass OPENPE_E2E_FOCUS through as a single --focus value (Ginkgo regex; | = OR).
 FOCUS_FLAGS=""
 if [[ -n "${OPENPE_E2E_FOCUS:-}" ]]; then
-  focus_value="${OPENPE_E2E_FOCUS//|/ }"
-  # shellcheck disable=SC2206
-  focus_parts=( ${focus_value} )
-  for part in "${focus_parts[@]}"; do
-    [[ -n "${part}" ]] || continue
-    FOCUS_FLAGS="${FOCUS_FLAGS} --focus=${part}"
-  done
+  FOCUS_FLAGS="--focus=${OPENPE_E2E_FOCUS}"
 fi
 
 GROUT_TEST_ARGS=""
