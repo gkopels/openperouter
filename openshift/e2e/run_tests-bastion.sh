@@ -1,9 +1,12 @@
 #!/bin/bash
-# Bastion-only e2e runner against nodelink.json + real worker underlay NICs.
+# Bastion-only e2e runner. Same core as run_tests.sh (shared excludes, namespaces,
+# make e2etests); assumes cluster + nodelink.json were already set up by
+# e2e-bastion / deploy-bastion / setup-clab-bastion.
 #
-# Requires: KUBECONFIG, nodelink.json (underlay NICs validated in setup/configure).
-# Default container runtime: docker (OPENPE_CLAB_RUNTIME / CLAB_RUNTIME / CONTAINER_RUNTIME).
-# OPENPE_E2E_NODE_SELECTOR drives nodelink generation and --instrumented-nodes-label.
+# Bastion-only knobs:
+#   CONTAINER_RUNTIME / OPENPE_CLAB_RUNTIME / CLAB_RUNTIME
+#   OPENPE_E2E_NODE_SELECTOR → --instrumented-nodes-label
+#   OPENPE_E2E_SKIP / OPENPE_E2E_FOCUS (optional)
 #
 # Usage:
 #   export KUBECONFIG=...
@@ -22,21 +25,7 @@ join() {
 }
 
 RUNTIME="${CONTAINER_RUNTIME:-${OPENPE_CLAB_RUNTIME:-${CLAB_RUNTIME:-docker}}}"
-# Namespaces match shared VM run_tests.sh (not env-overridable).
 INSTRUMENTED_NODES_LABEL="${OPENPE_E2E_NODE_SELECTOR:-node-role.kubernetes.io/worker}"
-
-if [[ -z "${KUBECONFIG:-}" ]]; then
-  echo "ERROR: KUBECONFIG must be set for bastion e2e" >&2
-  exit 1
-fi
-if [[ ! -f "${KUBECONFIG}" ]]; then
-  echo "ERROR: KUBECONFIG file not found: ${KUBECONFIG}" >&2
-  exit 1
-fi
-if [[ ! -f "${NODELINK}" ]]; then
-  echo "ERROR: ${NODELINK} missing — run setup-clab-bastion.sh / deploy-bastion first" >&2
-  exit 1
-fi
 
 # shellcheck source=./e2e-test-excludes.sh
 source "${SCRIPT_DIR}/e2e-test-excludes.sh"
@@ -71,7 +60,7 @@ if [ "${OPENPEROUTER_DATAPATH:-}" == "grout" ]; then
 fi
 
 echo "=== Run bastion e2e tests ==="
-echo "  CONTAINER_RUNTIME=${RUNTIME} KUBECONFIG=${KUBECONFIG}"
+echo "  CONTAINER_RUNTIME=${RUNTIME} KUBECONFIG=${KUBECONFIG:-}"
 echo "  openperouter-namespace=openshift-openperouter"
 echo "  frrk8s-namespace=openshift-frr-k8s"
 echo "  nodelink=${NODELINK}"
@@ -81,7 +70,6 @@ echo "  skip=${SKIP}"
 
 pushd "$SCRIPT_DIR"/../..
 
-# Namespace flags match openshift/e2e/run_tests.sh (VM / metal).
 CONTAINER_RUNTIME="${RUNTIME}" make e2etests \
   TEST_ARGS="--nodelink-config=${NODELINK} \
     --frrk8s-namespace=openshift-frr-k8s \
