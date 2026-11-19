@@ -38,9 +38,11 @@ echo "  CLAB_EXECUTOR=${CLAB_EXECUTOR} CLAB_RUNTIME=${CLAB_RUNTIME}"
 echo "  openperouter-namespace=openshift-openperouter"
 echo "  frrk8s-namespace=openshift-frr-k8s (prerequisite)"
 
-oc get nodes >/dev/null
+# Cluster must already have OpenPE + FRR-K8s; this only verifies readiness.
+sanity_check() {
+  echo "=== sanity_check ==="
+  oc get nodes >/dev/null
 
-check_prereqs() {
   echo "=== Checking OpenPE prerequisites ==="
   oc get ns openshift-openperouter >/dev/null || {
     echo "ERROR: openshift-openperouter missing — install OpenPE first" >&2
@@ -90,7 +92,7 @@ run_fabric() {
 
 case "${PHASE}" in
   prereqs)
-    check_prereqs
+    sanity_check
     echo "=== deploy-bastion prereqs-only complete ==="
     ;;
   fabric)
@@ -98,7 +100,7 @@ case "${PHASE}" in
     echo "=== deploy-bastion fabric complete ==="
     ;;
   all)
-    check_prereqs
+    sanity_check
     run_fabric
     echo "=== deploy-bastion complete ==="
     echo "Next: make e2e-bastion  # or ./openshift/e2e/e2e-bastion.sh"
