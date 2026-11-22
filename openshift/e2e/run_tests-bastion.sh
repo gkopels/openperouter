@@ -41,9 +41,10 @@ if [[ -n "${OPENPE_E2E_SKIP:-}" ]]; then
 fi
 
 # Pass OPENPE_E2E_FOCUS through as a single --focus value (Ginkgo regex; | = OR).
+# Quote so make's unquoted $(GINKGO_ARGS) does not treat | as a shell pipe.
 FOCUS_FLAGS=""
 if [[ -n "${OPENPE_E2E_FOCUS:-}" ]]; then
-  FOCUS_FLAGS="--focus=${OPENPE_E2E_FOCUS}"
+  FOCUS_FLAGS="--focus='${OPENPE_E2E_FOCUS}'"
 fi
 
 GROUT_TEST_ARGS=""
